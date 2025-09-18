@@ -8,6 +8,14 @@ import pandas as pd
 import re
 import os
 
+caminho_base = os.getcwd()
+# --- START: Global variables for filtering ---
+# Stores the complete, unfiltered data from the Treeview
+original_tree_data = [] 
+# A dictionary to hold the filter Combobox widgets
+filter_widgets = {}
+# --- END: Global variables ---
+
 def normalizar_codigos(campo):
     if pd.isna(campo):
         return []
@@ -15,30 +23,16 @@ def normalizar_codigos(campo):
 
 def input_demanda(cod_destino):
     veiculos_dict = {
-        'BIG SIDER': 6,
-        'BITREM': 7,
-        'CARRETA': 4,
-        'CARRETA LINE HAUL': 14,
-        'CARRETA REBAIXADA': 9,
-        'CTNR 20': 15,
-        'CTNR 40': 16,
-        'FIORINO': 11,
-        'RODOTREM': 8,
-        'TRUCK 3M': 3,
-        'TRUCK 3M ALONGADO': 18,
-        'TRUCK 3M PLUS': 13,
-        'TRUCK ALONGADO': 17,
-        'TRUCK VIAGEM': 2,
-        'TRUCK VIAGEM PLUS': 12,
-        'VAN': 10,
-        'VANDERLEA': 5,
-        'VEÍCULO 3/4': 1
+        'BIG SIDER': 6, 'BITREM': 7, 'CARRETA': 4, 'CARRETA LINE HAUL': 14,
+        'CARRETA REBAIXADA': 9, 'CTNR 20': 15, 'CTNR 40': 16, 'FIORINO': 11,
+        'RODOTREM': 8, 'TRUCK 3M': 3, 'TRUCK 3M ALONGADO': 18, 'TRUCK 3M PLUS': 13,
+        'TRUCK ALONGADO': 17, 'TRUCK VIAGEM': 2, 'TRUCK VIAGEM PLUS': 12, 'VAN': 10,
+        'VANDERLEA': 5, 'VEÍCULO 3/4': 1
     }
 
     db_fluxos = pd.read_excel('BD_Viajante.xlsx', sheet_name='FLUXOS')
     df = Processar_Demandas(cod_destino)
 
-    # Adiciona a coluna de código de veículo
     cod_veiculos = []
     tipos_saturacao = []
     cod_fornecedor = []
@@ -70,36 +64,47 @@ def input_demanda(cod_destino):
     df["COD IMS"] = cod_fornecedor
 
     df = df[['COD FORNECEDOR','COD IMS', 'COD DESTINO', 'DESENHO', 'QTDE', 'VEICULO', 'TIPO SATURACAO']]
-
-    # Salvar em Excel
     df.to_excel("Template.xlsx", index=False)
     print("Template.xlsx")
 
+def apply_filters(event=None):
+    """
+    Filters the Treeview using "contains" logic for typed text.
+    Also handles dropdown selections.
+    """
+    if event and event.widget.get() == "-- All --":
+        event.widget.set('')
 
-# Dicionário com {descrição: código}
+    tree.delete(*tree.get_children())
+
+    filters = {col: widget.get() for col, widget in filter_widgets.items()}
+    
+    column_ids = tree["columns"]
+
+    for row_values in original_tree_data:
+        match = True
+        row_dict = dict(zip(column_ids, row_values))
+
+        for col_id, filter_value in filters.items():
+            if filter_value:
+                cell_value = str(row_dict.get(col_id, "")).lower()
+                text_to_find = filter_value.lower()
+                if text_to_find not in cell_value:
+                    match = False
+                    break
+        
+        if match:
+            tree.insert("", END, values=row_values)
+
 veiculos_dict = {
-    'BIG SIDER': 6,
-    'BITREM': 7,
-    'CARRETA': 4,
-    'CARRETA LINE HAUL': 14,
-    'CARRETA REBAIXADA': 9,
-    'CTNR 20': 15,
-    'CTNR 40': 16,
-    'FIORINO': 11,
-    'RODOTREM': 8,
-    'TRUCK 3M': 3,
-    'TRUCK 3M ALONGADO': 18,
-    'TRUCK 3M PLUS': 13,
-    'TRUCK ALONGADO': 17,
-    'TRUCK VIAGEM': 2,
-    'TRUCK VIAGEM PLUS': 12,
-    'VAN': 10,
-    'VANDERLEA': 5,
-    'VEÍCULO 3/4': 1
+    'BIG SIDER': 6, 'BITREM': 7, 'CARRETA': 4, 'CARRETA LINE HAUL': 14,
+    'CARRETA REBAIXADA': 9, 'CTNR 20': 15, 'CTNR 40': 16, 'FIORINO': 11,
+    'RODOTREM': 8, 'TRUCK 3M': 3, 'TRUCK 3M ALONGADO': 18, 'TRUCK 3M PLUS': 13,
+    'TRUCK ALONGADO': 17, 'TRUCK VIAGEM': 2, 'TRUCK VIAGEM PLUS': 12, 'VAN': 10,
+    'VANDERLEA': 5, 'VEÍCULO 3/4': 1
 }
 
 janela = Tk()
-# Carrega a imagem da carreta
 try:
     img = Image.open("carreta.png").resize((140, 100))
     caminhao_img = ImageTk.PhotoImage(img)
@@ -110,143 +115,150 @@ janela.title("VIAJANTE")
 janela.geometry("1400x700")
 janela.state('zoomed')
 
-# Frame principal
 frame_principal = Frame(janela)
 frame_principal.pack(fill=BOTH, expand=True)
 
-# -------------------
-# ***** NEW CODE START *****
-# 1. Create the loading label but keep it hidden.
-# This label will be shown during processing.
-loading_label = Label(frame_principal, 
-                      text="Processando... Por favor, aguarde.",
-                      font=("Arial", 18, "bold"), 
-                      bg="white", 
-                      fg="#007acc",
-                      relief="solid", 
-                      borderwidth=2)
-# We will use .place() to show it and .place_forget() to hide it.
-# ***** NEW CODE END *****
-# -------------------
+loading_label = Label(frame_principal, text="Processando... Por favor, aguarde.",
+                      font=("Arial", 18, "bold"), bg="white", fg="#007acc",
+                      relief="solid", borderwidth=2)
 
-# Parte superior (linha única com seleção, canvas e resumo lado a lado)
 frame_top = Frame(frame_principal)
-frame_top.pack(fill=X, padx=10, pady=10)
+frame_top.pack(fill=X, padx=10, pady=5)
 
-# ----- Coluna 1: Seleção de veículos -----
+frame_top.grid_columnconfigure(0, weight=0)
+frame_top.grid_columnconfigure(1, weight=1)
+frame_top.grid_columnconfigure(2, weight=0)
+
 frame_selecao = Frame(frame_top)
 frame_selecao.grid(row=0, column=0, sticky='nw', padx=10)
 
-Label(frame_selecao, text="Selecione o tipo de veículo:").grid(row=0, column=0, columnspan=3, pady=(0, 5))
+Label(frame_selecao, text="Selecione o tipo de veículo:", font=("Arial", 10)).grid(row=0, column=0, columnspan=3, pady=(0, 5), sticky='w')
 
 veiculo_var = StringVar(value='')
-
 frame_veiculos = Frame(frame_selecao)
 frame_veiculos.grid(row=1, column=0, columnspan=3, sticky='w')
 
+style = ttk.Style()
+style.theme_use('clam')
+style.configure("Modern.TButton", font=("Arial", 11, "bold"), background="#007acc",
+                foreground="white", padding=(10, 5), borderwidth=0, relief="flat")
+style.map("Modern.TButton", background=[('active', '#005f9e'), ('!disabled', '#007acc')])
+style.configure("Vehicle.Toolbutton", padding=5, font=("Arial", 9), width=17,
+                anchor="center", relief="raised")
+style.map("Vehicle.Toolbutton", background=[('active', '#e0e0e0'), ('selected', '#007acc')],
+          foreground=[('selected', 'white')])
+
 colunas = 3
 for i, (nome, cod) in enumerate(sorted(veiculos_dict.items())):
-    rb = Radiobutton(frame_veiculos, text=nome, variable=veiculo_var, value=str(cod))
-    rb.grid(row=i // colunas, column=i % colunas, sticky='w', padx=5, pady=2)
+    rb = ttk.Radiobutton(frame_veiculos, text=nome, variable=veiculo_var,
+                         value=str(cod), style="Vehicle.Toolbutton")
+    rb.grid(row=i // colunas, column=i % colunas, sticky='w', padx=2, pady=2)
 
 label_veiculo = Label(frame_selecao, text="")
-label_veiculo.grid(row=2, column=0, columnspan=3, pady=5)
-
-# Variável para armazenar o modo de atualização
+label_veiculo.grid(row=2, column=1, columnspan=3, pady=2)
 modo_manual = BooleanVar(value=False)
+check_manual = Checkbutton(frame_selecao, text="Usar veículo escolhido para todos", variable=modo_manual)
+check_manual.grid(row=2, column=0, columnspan=3, sticky='w', pady=(5,5))
 
-# Checkbutton para alternar o modo
-check_manual = Checkbutton(
-    frame_selecao,
-    text="Usar veículo escolhido para todos",
-    variable=modo_manual
-)
-check_manual.grid(row=3, column=0, columnspan=3, sticky='w')
+btn_atualizar = ttk.Button(frame_selecao, text="Atualizar Dados",
+                           command=lambda: atualizar(), style="Modern.TButton")
 
-Button(frame_selecao, text="Atualizar", command=lambda: atualizar()).grid(row=4, column=1, pady=5)
+Label(frame_selecao, text="Cód. Destino:", font=("Arial", 10)).grid(row=2, column=5, pady=(10, 5), padx=(10, 0), sticky='e')
+cod_destino_var = StringVar(value='1080')
 
-# ----- Coluna 2: Canvas de caminhões -----
+def validate_numeric(P):
+    return P.isdigit() or P == ""
+
+vcmd = (janela.register(validate_numeric), '%P')
+entry_cod_destino = Entry(frame_selecao, textvariable=cod_destino_var, width=10, validate="key", validatecommand=vcmd)
+entry_cod_destino.grid(row=2, column=6, pady=(10, 5), sticky='w')
+btn_atualizar.grid(row=2, column=7, pady=(10, 5), padx=5, sticky="ew")
+
 frame_caminhoes = Frame(frame_top)
-frame_caminhoes.grid(row=0, column=1, padx=20)
-
-canvas_caminhoes = Canvas(frame_caminhoes, width=400, height=300)
+frame_caminhoes.grid(row=0, column=0, padx=(550, 0), sticky='nw')
+canvas_caminhoes = Canvas(frame_caminhoes, width=360, height=240)
 canvas_caminhoes.pack()
 
-# ----- Coluna 3: Tabela resumo -----
 frame_resumo = Frame(frame_top)
-frame_resumo.grid(row=0, column=2, sticky='ne', padx=10)
-
-tree_resumo = ttk.Treeview(frame_resumo, columns=("Info", "Valor"), show="headings", height=10)
+frame_resumo.grid(row=0, column=2, sticky='ne', padx=20)
+tree_resumo = ttk.Treeview(frame_resumo, columns=("Info", "Valor"), show="headings", height=5)
 tree_resumo.heading("Info", text="Info")
 tree_resumo.heading("Valor", text="Valor")
 tree_resumo.column("Info", width=120, anchor='center')
 tree_resumo.column("Valor", width=100, anchor='center')
 tree_resumo.pack()
+for item in ["Ocupação Total", "Qtd Veículos", "Volume Total", "Peso Total", "Embalagens"]:
+    tree_resumo.insert("", END, values=(item, ""))
 
-# Preencher exemplo
-tree_resumo.insert("", END, values=("Ocupação Total", ""))
-tree_resumo.insert("", END, values=("Qtd Veículos", ""))
-tree_resumo.insert("", END, values=("Volume Total", ""))
-tree_resumo.insert("", END, values=("Peso Total", ""))
-#tree_resumo.insert("", END, values=("Peso Máximo", ""))
-tree_resumo.insert("", END, values=("Embalagens", ""))
-
-# -------------------
-# Parte inferior: Tabela principal
 frame_bottom = Frame(frame_principal)
 frame_bottom.pack(fill=BOTH, expand=True, padx=10, pady=(0, 10))
 
+frame_filters = Frame(frame_bottom)
+frame_filters.pack(fill=X, pady=(5, 2))
+
 scroll_y = Scrollbar(frame_bottom, orient=VERTICAL)
 scroll_y.pack(side=RIGHT, fill=Y)
-
 tree = ttk.Treeview(frame_bottom, yscrollcommand=scroll_y.set)
 tree.pack(fill=BOTH, expand=True)
 scroll_y.config(command=tree.yview)
 
-# Estilo do cabeçalho da tabela
-style = ttk.Style()
-style.configure("Treeview.Heading", background="#007acc", foreground="blue", font=("Arial", 10, "bold"))
+style.configure("Treeview.Heading", background="#007acc", foreground="white",
+                font=("Arial", 10, "bold"), relief="flat")
+style.map("Treeview.Heading", background=[('active', '#005f9e')])
 
-
-# -------------------
-# ***** MODIFIED FUNCTION START *****
-# 2. Modify the 'atualizar' function to show and hide the loading label.
 def atualizar():
-    # Show the loading label in the center of the main frame
     loading_label.place(relx=0.5, rely=0.5, anchor='center')
-    loading_label.lift()  # Ensure the label is on top of other widgets
-    janela.update_idletasks()  # Force the UI to refresh and show the label immediately
+    loading_label.lift()
+    janela.update_idletasks()
 
     try:
-        # --- This is your original code block ---
+        cod_destino_str = cod_destino_var.get()
+        cod_destino_value = int(cod_destino_str) if cod_destino_str.isdigit() else 1080
         cod = veiculo_var.get()
         label_veiculo.config(text=f"Código selecionado: {cod}")
+
         if cod:
-            input_demanda(1080)
+            input_demanda(cod_destino_value)
             completar_informacoes(tree, int(cod), tree_resumo, canvas_caminhoes, caminhao_img, usar_manual=modo_manual.get())
+            
+            # --- START: LOGIC FOR SPECIFIC DROPDOWN FILTERS ---
+            global original_tree_data
+            original_tree_data = [tree.item(child)['values'] for child in tree.get_children()]
+            
+            # Define which columns should have a filter
+            columns_to_filter = ['COD FORNECEDOR', 'FORNECEDOR', 'DESENHO']
+            all_table_columns = list(tree["columns"])
+
+            # Create the filter widgets only once
+            if not filter_widgets:
+                # Clear any old widgets from the frame in case columns change
+                for widget in frame_filters.winfo_children():
+                    widget.destroy()
+
+                for col_id in columns_to_filter:
+                    # Only create a filter if the column actually exists in the table
+                    if col_id in all_table_columns:
+                        col_frame = Frame(frame_filters)
+                        col_frame.pack(side=LEFT, padx=2, fill=X, expand=True)
+                        Label(col_frame, text=col_id, font=("Arial", 8)).pack(anchor='w')
+                        combo = ttk.Combobox(col_frame, font=("Arial", 9))
+                        combo.pack(fill=X)
+                        combo.bind('<KeyRelease>', apply_filters)
+                        combo.bind('<<ComboboxSelected>>', apply_filters)
+                        filter_widgets[col_id] = combo
+
+            # Update dropdown values for the existing filter widgets
+            for col_id, combo in filter_widgets.items():
+                col_index = all_table_columns.index(col_id)
+                unique_values = sorted(list(set(str(row[col_index]) for row in original_tree_data if str(row[col_index]).strip())))
+                combo['values'] = ["-- All --"] + unique_values
+                combo.set('')
+            # --- END: FILTER LOGIC ---
+            
             consolidar_dados()
-        # ----------------------------------------
     except Exception as e:
-        # It's good practice to handle potential errors
         print(f"Ocorreu um erro durante a atualização: {e}")
     finally:
-        # This block will run whether an error occurred or not,
-        # ensuring the loading label is always hidden afterward.
         loading_label.place_forget()
-# ***** MODIFIED FUNCTION END *****
-# -------------------
 
 janela.mainloop()
-
-
-
-
-
-
-
-
-
-
-
-
-

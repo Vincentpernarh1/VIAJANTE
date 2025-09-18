@@ -9,27 +9,11 @@ from PIL import Image, ImageTk
 import traceback
 import os
 
+caminho_base = os.getcwd()
+    
 
 def Processar_Demandas(cod_destino, pasta_demandas="Demandas"):
-    """
-    Processa arquivos de demanda (.txt, .csv, .xls, .xlsx) em uma subpasta especificada.
-
-    A função lê todos os arquivos suportados na pasta, extrai dados com base em uma
-    largura fixa e os consolida em um DataFrame do pandas.
-
-    Args:
-        cod_destino (any): O valor a ser atribuído à coluna "COD DESTINO" para todos
-                           os registros processados.
-        pasta_demandas (str, optional): O nome da subpasta que contém os arquivos
-                                        de demanda. O padrão é "Demandas".
-
-    Returns:
-        pandas.DataFrame: Um DataFrame contendo os dados processados de todos os
-                          arquivos. Retorna um DataFrame vazio se a pasta não for
-                          encontrada ou nenhum dado for extraído.
-    """
     # Define o caminho completo para a pasta de demandas
-    caminho_base = os.getcwd()
     caminho_pasta = os.path.join(caminho_base, pasta_demandas)
 
     # Verifica se a pasta de demandas existe
@@ -284,17 +268,38 @@ def calcular_empilhamento(df_saturacao, db_empilhamento):
 
 
 
-def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao_img, usar_manual=False):
+def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao_img, usar_manual=False,caminho_BD = 'BD'):
 
     try:
+
+
         # --- Leitura dos arquivos ---
         template = pd.read_excel('Template.xlsx', dtype={'COD FORNECEDOR': int, 'DESENHO': str})
         template = template[template['QTDE'] > 0]
-        db_PN = pd.read_excel('BD_Viajante.xlsx', sheet_name='BD_PN', dtype={'COD FORNECEDOR': int, 'DESENHO': str})
-        db_MDR = pd.read_excel('BD_Viajante.xlsx', sheet_name='BD_MDR')
-        db_veiculos = pd.read_excel('BD_Viajante.xlsx', sheet_name='VEÍCULOS')
-        db_empilhamento = pd.read_excel('BD_Viajante.xlsx', sheet_name='BD_EMPILHAMENTO')
-        db_efi = pd.read_excel('BD_Viajante.xlsx', sheet_name='BD_EFI')
+        
+        
+        BD_PN = os.path.join(caminho_base,caminho_BD,"BD_CADASTRO_PN.xlsx")
+        BD_MDR = os.path.join(caminho_base,caminho_BD,"BD_CADASTRO_MDR.xlsx")
+        VEÍCULOS = os.path.join(caminho_base,caminho_BD,"VEÍCULOS.xlsx")
+        db_empilhamento = os.path.join(caminho_base,caminho_BD,"BD_EMPILHAMENTO_EMBALAGENS.xlsx")
+        db_efi = os.path.join(caminho_base,caminho_BD,"BD_CADASTRO_MDR_PERDA_COMPRIMENTO.xlsx")
+        db_efi = os.path.join(caminho_base,caminho_BD,"BD_CADASTRO_MDR_PERDA_COMPRIMENTO.xlsx")
+       
+        # ------------------Working in the DB structrue------------------
+        db_PN = pd.read_excel(BD_PN, sheet_name='BD', dtype={'CÓD. FORNECEDOR': int, 'DESENHO': str})
+        db_PN = db_PN.rename(columns={'CÓD. FORNECEDOR': 'COD FORNECEDOR'})
+
+        db_MDR = pd.read_excel(BD_MDR, sheet_name='BD')
+        db_MDR = db_MDR.rename(columns={'DESCRIÇÃO2': 'DESCRIÇÃO'})
+
+        db_veiculos = pd.read_excel(VEÍCULOS, sheet_name='VEÍCULOS')
+
+        db_empilhamento = pd.read_excel(db_empilhamento, sheet_name='BD')
+        db_empilhamento = db_empilhamento.rename(columns={'CÓD. FORNECEDOR': 'COD FORNECEDOR'})
+
+        db_efi = pd.read_excel(db_efi,sheet_name='BD')
+
+
 
         # --- Normalização de tipos ---
         db_PN['DESENHO ATUALIZAÇÃO'] = pd.to_datetime(db_PN['DESENHO ATUALIZAÇÃO'], errors='coerce')
@@ -565,7 +570,7 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
 
 def consolidar_dados():
     # Carrega os dados
-    fluxos = pd.read_excel('BD_Viajante.xlsx', sheet_name='FLUXOS')
+    fluxos =  os.path.join(caminho_base,"BD","FLUXO.xlsx")
     template = pd.read_excel('VIAJANTE.xlsx', sheet_name='Template Completo')
 
     # Filtra linhas com quantidade válida

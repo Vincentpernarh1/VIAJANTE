@@ -8,6 +8,7 @@ import pandas as pd
 import re
 import os
 
+caminho_base = os.getcwd()
 # --- START: Global variables for filtering ---
 # Stores the complete, unfiltered data from the Treeview
 original_tree_data = [] 
@@ -29,7 +30,8 @@ def input_demanda(cod_destino):
         'VANDERLEA': 5, 'VEÍCULO 3/4': 1
     }
 
-    db_fluxos = pd.read_excel('BD_Viajante.xlsx', sheet_name='FLUXOS')
+    fluxos =  os.path.join(caminho_base,"BD","FLUXO.xlsx")
+    db_fluxos = pd.read_excel(fluxos, sheet_name='FLUXOS')
     df = Processar_Demandas(cod_destino)
 
     cod_veiculos = []
