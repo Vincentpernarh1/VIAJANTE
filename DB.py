@@ -8,6 +8,7 @@ import re
 from PIL import Image, ImageTk
 import traceback
 import os
+import numpy as np
 
 caminho_base = os.getcwd()
     
@@ -167,6 +168,7 @@ def calcular_empilhamento_line_haul(df_saturacao, db_empilhamento):
 
                 total_empilhado = usadas_base + usadas_sobre
                 chave = f"{fornecedor}-{embal_base}-{embal_sobre}"
+               
                 saturacao = total_empilhado / capacidade_veiculo
 
                 empilhamento_rows.append({
@@ -228,6 +230,7 @@ def calcular_empilhamento(df_saturacao, db_empilhamento):
 
                 total_empilhado = usadas_base + usadas_sobre
                 chave = f"{fornecedor}-{embal_base}-{embal_sobre}"
+                
                 saturacao = total_empilhado / capacidade_veiculo
 
                 empilhamento_rows.append({
@@ -309,34 +312,51 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
 
         db_PN = db_PN.sort_values('DESENHO ATUALIZAÇÃO', ascending=False)
 
+        # Criar chave composta DESENHO+MDR em db_PN
+        db_PN['KEY'] = db_PN['DESENHO'].astype(str) + '_' + db_PN['MDR'].astype(str)
+
         # --- Mapeamentos únicos para .map() seguros ---
         mapa_fornecedores = db_PN.drop_duplicates('COD FORNECEDOR').set_index('COD FORNECEDOR')['FORNECEDOR']
-        mapa_pn = db_PN.drop_duplicates('DESENHO').set_index('DESENHO')['DESCRIÇÃO']
-        mapa_mdr = db_PN.drop_duplicates('DESENHO').set_index('DESENHO')['MDR']
+
+        # Mapas baseados na chave composta
+        mapa_pn = db_PN.drop_duplicates('KEY').set_index('KEY')['DESCRIÇÃO']
+        mapa_mdr = db_PN.drop_duplicates('KEY').set_index('KEY')['MDR']
+        mapa_qme = db_PN.drop_duplicates('KEY').set_index('KEY')['QME']
+        mapa_peso_pn = db_PN.drop_duplicates('KEY').set_index('KEY')['PESO (Kg) MATERIAL']
+
+        # Mapas vindos do db_MDR
         mapa_descricao_mdr = db_MDR.drop_duplicates('MDR').set_index('MDR')['DESCRIÇÃO']
-        mapa_qme = db_PN.drop_duplicates('DESENHO').set_index('DESENHO')['QME']
         mapa_volume = db_MDR.drop_duplicates('MDR').set_index('MDR')['VOLUME']
-        mapa_peso_pn = db_PN.drop_duplicates('DESENHO').set_index('DESENHO')['PESO (Kg) MATERIAL']
         mapa_peso_mdr = db_MDR.drop_duplicates('MDR').set_index('MDR')['MDR PESO']
         mapa_peso_max = db_veiculos.set_index('COD VEICULO')['PESO MAXIMO']
 
-
         # --- Enriquecimento do template ---
-        # Se o usuário quiser sobrescrever todos os veículos com o escolhido:
-        if usar_manual:
-            template['VEICULO'] = veiculo
 
+        # Passo 1: primeiro trazer MDR pelo DESENHO, para podermos montar a KEY
+        template['MDR'] = template['DESENHO'].map(
+            db_PN.drop_duplicates('DESENHO').set_index('DESENHO')['MDR']
+        )
+
+        # Passo 2: agora que já temos MDR no template, podemos montar a KEY
+        template['KEY'] = template['DESENHO'].astype(str) + '_' + template['MDR'].astype(str)
+
+        # Passo 3: enriquecer com os mapas
         template['PESO_MAXIMO'] = template['VEICULO'].map(mapa_peso_max)
         template['FORNECEDOR'] = template['COD FORNECEDOR'].map(mapa_fornecedores)
-        template['DESCRIÇÃO MATERIAL'] = template['DESENHO'].map(mapa_pn)
-        template['MDR'] = template['DESENHO'].map(mapa_mdr)
+        template['DESCRIÇÃO MATERIAL'] = template['KEY'].map(mapa_pn)
+        template['MDR'] = template['KEY'].map(mapa_mdr)  # reforça MDR correto do KEY
         template['DESCRIÇÃO DA EMBALAGEM'] = template['MDR'].map(mapa_descricao_mdr)
-        template['QME'] = template['DESENHO'].map(mapa_qme)
-        template['QTD EMBALAGENS'] = round(template['QTDE'] / template['QME'], 0)
+        template['QME'] = template['KEY'].map(mapa_qme)
+
+        template['QTD EMBALAGENS'] = np.ceil(template['QTDE'] / template['QME'])
+
         template['M³'] = round(template['QTD EMBALAGENS'] * template['MDR'].map(mapa_volume), 1)
-        template['PESO MAT'] = round(template['QTDE'] * template['DESENHO'].map(mapa_peso_pn), 1)
+        template['PESO MAT'] = round(template['QTDE'] * template['KEY'].map(mapa_peso_pn), 1)
         template['PESO MDR'] = round(template['QTD EMBALAGENS'] * template['MDR'].map(mapa_peso_mdr), 1)
         template['PESO TOTAL'] = template['PESO MAT'] + template['PESO MDR']
+
+
+        print(template['FORNECEDOR'])
 
         template = template[['COD FORNECEDOR', 'FORNECEDOR', 'COD DESTINO', 'DESENHO', 'QTDE', 'DESCRIÇÃO MATERIAL',
                              'MDR', 'DESCRIÇÃO DA EMBALAGEM', 'QME', 'QTD EMBALAGENS', 'TIPO SATURACAO',
@@ -453,6 +473,7 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
             lambda row: 1 if (row['FORNECEDOR'], row['EMBALAGEM']) in sobrepostas else 0, axis=1)
 
         df_saturacao['CHAVE'] = df_saturacao['COD FORNECEDOR'].astype(str) + '-' + df_saturacao['EMBALAGEM'].astype(str)
+
 
         # --- Eficiência de empilhamento por embalagem (evita .map com índice duplicado) ---
         mapa_efi = db_efi.drop_duplicates('CHAVE FORNE + MDR').set_index('CHAVE FORNE + MDR')[valor_veiculo]
@@ -571,6 +592,7 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
 def consolidar_dados():
     # Carrega os dados
     fluxos =  os.path.join(caminho_base,"BD","FLUXO.xlsx")
+    fluxos = pd.read_excel(fluxos,sheet_name='FLUXOS')
     template = pd.read_excel('VIAJANTE.xlsx', sheet_name='Template Completo')
 
     # Filtra linhas com quantidade válida
@@ -621,6 +643,7 @@ def consolidar_dados():
 
                 cargas = ceil(saturacao_total / 100)
 
+                
                 # --- Coluna de Sugestão ---
                 saturacao_residual = saturacao_total % 100
                 if saturacao_residual <= 2:
@@ -666,6 +689,8 @@ def consolidar_dados():
 
     df_volume = pd.DataFrame(dados_volume)
     df_volume.to_excel('Volume_por_rota.xlsx', index=False)
+
+
 #tree = ttk.Treeview()
 #tree_resumo = ttk.Treeview()
 #completar_informacoes(tree,3, tree_resumo)
