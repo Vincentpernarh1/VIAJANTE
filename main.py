@@ -8,6 +8,26 @@ import pandas as pd
 import re
 import os
 
+import warnings # <-- 1. Import the library
+
+# 2. Add these lines to ignore the specific warnings from the Excel reader
+warnings.filterwarnings(
+    "ignore",
+    category=UserWarning,
+    message=".*OLE2.*"
+)
+warnings.filterwarnings(
+    "ignore",
+    category=UserWarning,
+    message=".*CODEPAGE.*"
+)
+warnings.filterwarnings(
+    "ignore",
+    message="^WARNING .*" # Hides the file size warnings which don't have a category
+)
+
+
+
 caminho_base = os.getcwd()
 # --- START: Global variables for filtering ---
 # Stores the complete, unfiltered data from the Treeview
@@ -255,7 +275,7 @@ def atualizar():
                 combo['values'] = ["-- All --"] + unique_values
                 combo.set('')
             # --- END: FILTER LOGIC ---
-            
+            print("check erro ststus--------------------")
             consolidar_dados()
     except Exception as e:
         print(f"Ocorreu um erro durante a atualização: {e}")

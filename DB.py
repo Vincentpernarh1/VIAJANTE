@@ -9,11 +9,34 @@ from PIL import Image, ImageTk
 import traceback
 import os
 import numpy as np
+import warnings # <-- 1. Import the library
+
+# 2. Add these lines to ignore the specific warnings from the Excel reader
+warnings.filterwarnings(
+    "ignore",
+    category=UserWarning,
+    message=".*OLE2.*"
+)
+warnings.filterwarnings(
+    "ignore",
+    category=UserWarning,
+    message=".*CODEPAGE.*"
+)
+warnings.filterwarnings(
+    "ignore",
+    message="^WARNING .*" # Hides the file size warnings which don't have a category
+)
+
+
 
 caminho_base = os.getcwd()
     
 
 def Processar_Demandas(cod_destino, pasta_demandas="Demandas"):
+    """
+    Processa arquivos de demanda de uma pasta, tratando arquivos de texto/CSV
+    e Excel de forma diferente, e os consolida em um único DataFrame.
+    """
     # Define o caminho completo para a pasta de demandas
     caminho_pasta = os.path.join(caminho_base, pasta_demandas)
 
@@ -22,68 +45,119 @@ def Processar_Demandas(cod_destino, pasta_demandas="Demandas"):
         print(f"Aviso: A pasta '{caminho_pasta}' não foi encontrada.")
         return pd.DataFrame()
 
-    # Lista para armazenar os dicionários de dados
-    dados = []
+    # Lista para armazenar os DataFrames de cada arquivo processado
+    lista_dfs = []
 
     # Percorre todos os arquivos na pasta de demandas
     for nome_arquivo in os.listdir(caminho_pasta):
         caminho_completo_arquivo = os.path.join(caminho_pasta, nome_arquivo)
         nome_arquivo_lower = nome_arquivo.lower()
         
-        linhas_a_processar = []
-
         try:
-            # Lê arquivos de texto ou CSV
+            # --- MANTÉM A LÓGICA ORIGINAL PARA ARQUIVOS .TXT E .CSV ---
             if nome_arquivo_lower.endswith((".txt", ".csv")):
+                dados_arquivo_atual = []
                 with open(caminho_completo_arquivo, "r", encoding="utf-8", errors="ignore") as arquivo:
                     linhas_a_processar = arquivo.readlines()
-            
-            # Lê arquivos Excel
+
+                # Processa cada linha extraída do arquivo de texto
+                for linha in linhas_a_processar:
+                    if "AUTOMATIC" in linha:
+                        continue
+
+                    linha = linha.strip()
+
+                    # A lógica de fatiamento requer um comprimento mínimo
+                    if len(linha) >= 20:
+                        try:
+                            # Extrai os dados com base na posição dos caracteres
+                            desenho = linha[3:14]
+                            cod_fornecedor = linha[-20:-11]
+                            quantidade = linha[-11:].replace("+", "")
+
+                            # Adiciona os dados extraídos à lista deste arquivo
+                            dados_arquivo_atual.append({
+                                "DESENHO": int(desenho.strip()),
+                                "COD FORNECEDOR": int(cod_fornecedor.strip()),
+                                "QTDE": int(quantidade.strip()),
+                            })
+                        except (ValueError, IndexError):
+                            # Ignora linhas que não seguem o formato esperado
+                            continue
+                
+                # Se dados foram extraídos do arquivo, cria um DataFrame
+                if dados_arquivo_atual:
+                    df_temp = pd.DataFrame(dados_arquivo_atual)
+                    df_temp["COD DESTINO"] = cod_destino
+                    lista_dfs.append(df_temp)
+
+            # --- NOVA LÓGICA PARA PROCESSAR ARQUIVOS EXCEL (.XLS, .XLSX) ---
             elif nome_arquivo_lower.endswith((".xls", ".xlsx")):
-                # Para arquivos Excel, assume-se que os dados a serem processados
-                # estão na primeira coluna. Cada célula é tratada como uma 'linha'.
-                df_excel = pd.read_excel(caminho_completo_arquivo, header=None, dtype=str)
-                if not df_excel.empty:
-                    linhas_a_processar = df_excel.iloc[:, 0].dropna().astype(str).tolist()
+                
+                # Mapeamento dos nomes de coluna do arquivo Excel para os nomes desejados
+                colunas_mapeamento = {
+                    'DESENHO': 'DESENHO',
+                    'COD ORIGEM': 'COD FORNECEDOR',
+                    'ENTREGA SOLICITADA': 'QTDE',
+                    'COD DESTINO': 'COD DESTINO'
+                }
+                
+                # Lê o arquivo Excel
+                df_excel = pd.read_excel(caminho_completo_arquivo)
 
-        except Exception as e:
-            print(f"Erro ao ler o arquivo '{nome_arquivo}': {e}")
-            continue
+                # Pega a lista de colunas que precisamos do arquivo original
+                colunas_originais_necessarias = list(colunas_mapeamento.keys())
 
-        # Processa cada linha extraída do arquivo
-        for linha in linhas_a_processar:
-            if "AUTOMATIC" in linha:
-                continue
-
-            linha = linha.strip()
-
-            # A lógica de fatiamento requer um comprimento mínimo de 20 caracteres
-            if len(linha) >= 20:
-                try:
-                    # Extrai os dados com base na posição dos caracteres
-                    desenho = linha[3:14]
-                    cod_fornecedor = linha[-20:-11]
-                    quantidade = linha[-11:].replace("+", "")
-
-                    # Adiciona os dados extraídos e convertidos à lista
-                    dados.append({
-                        "DESENHO": int(desenho.strip()),
-                        "COD FORNECEDOR": int(cod_fornecedor.strip()),
-                        "QTDE": int(quantidade.strip()),
-                        "COD DESTINO": cod_destino
-                    })
-                except (ValueError, IndexError):
-                    # Ignora linhas que não seguem o formato esperado após o fatiamento
-                    # print(f"Aviso: Ignorando linha mal formatada no arquivo '{nome_arquivo}': '{linha}'")
+                # Verifica se todas as colunas necessárias existem no arquivo
+                if not all(coluna in df_excel.columns for coluna in colunas_originais_necessarias):
+                    print(f"Aviso: O arquivo '{nome_arquivo}' não contém todas as colunas necessárias e será ignorado.")
                     continue
 
-    # Cria o DataFrame a partir da lista de dados
-    if not dados:
+                # 1. Seleciona apenas as colunas que nos interessam
+                df_temp = df_excel[colunas_originais_necessarias].copy()
+                
+                # 2. Renomeia as colunas para o padrão final
+                df_temp.rename(columns=colunas_mapeamento, inplace=True)
+
+                # 3. Adiciona o DataFrame processado à lista para concatenação posterior
+                lista_dfs.append(df_temp)
+
+        except Exception as e:
+            print(f"Erro ao processar o arquivo '{nome_arquivo}': {e}")
+            continue
+
+    # --- LÓGICA FINAL PARA CONSOLIDAR OS DADOS ---
+    # Se a lista de DataFrames estiver vazia, retorna um DataFrame vazio
+    if not lista_dfs:
         print("Nenhum dado válido foi processado.")
         return pd.DataFrame()
-        
-    df = pd.DataFrame(dados)
-    return df
+    
+    # Concatena todos os DataFrames da lista em um único DataFrame final
+    df_final = pd.concat(lista_dfs, ignore_index=True)
+
+    # Garante que as colunas numéricas tenham o tipo de dados correto, tratando possíveis erros
+    # Esta etapa é importante para garantir a consistência entre os dados de texto e Excel
+    colunas_numericas = ["DESENHO", "COD FORNECEDOR", "QTDE"]
+    for col in colunas_numericas:
+        df_final[col] = pd.to_numeric(df_final[col], errors='coerce')
+
+    # Remove linhas onde a conversão numérica falhou (resultando em NaT/NaN)
+    df_final.dropna(subset=colunas_numericas, inplace=True)
+
+    # Converte colunas para inteiro após remover os nulos
+    for col in colunas_numericas:
+        df_final[col] = df_final[col].astype(int)
+    
+    return df_final
+
+# Exemplo de como chamar a função
+# df_processado = Processar_Demandas(cod_destino="BR01")
+# print(df_processado)
+
+
+
+
+
 
 
 def desenhar_caminhoes(canvas, ocupacao, caminhao_img):
@@ -273,6 +347,23 @@ def calcular_empilhamento(df_saturacao, db_empilhamento):
 
 def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao_img, usar_manual=False,caminho_BD = 'BD'):
 
+
+    def split_key_logic(code):
+        """
+        Splits a code by '/'. 
+        Returns the second element if a split occurs, otherwise returns the original code.
+        """
+        # Convert to string just in case, then split
+        
+        parts = str(code).split('/')
+        
+        if len(parts) > 1:
+            # If the split created more than one part, take the second one (index 1)
+            return parts[1].strip() 
+            
+        else:
+            # Otherwise, take the original part (index 0)
+            return parts[0].strip()
     try:
 
 
@@ -330,7 +421,6 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
         mapa_peso_mdr = db_MDR.drop_duplicates('MDR').set_index('MDR')['MDR PESO']
         mapa_peso_max = db_veiculos.set_index('COD VEICULO')['PESO MAXIMO']
 
-        # --- Enriquecimento do template ---
 
         # Passo 1: primeiro trazer MDR pelo DESENHO, para podermos montar a KEY
         template['MDR'] = template['DESENHO'].map(
@@ -339,10 +429,17 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
 
         # Passo 2: agora que já temos MDR no template, podemos montar a KEY
         template['KEY'] = template['DESENHO'].astype(str) + '_' + template['MDR'].astype(str)
+        
 
         # Passo 3: enriquecer com os mapas
         template['PESO_MAXIMO'] = template['VEICULO'].map(mapa_peso_max)
-        template['FORNECEDOR'] = template['COD FORNECEDOR'].map(mapa_fornecedores)
+        template['MAP_KEY'] = template['COD IMS'].fillna(template['COD FORNECEDOR'])
+        # .apply(split_key_logic)
+        template['FORNECEDOR'] =template['MAP_KEY'].map(mapa_fornecedores)
+       
+        template = template.drop(columns=['MAP_KEY'])
+       
+
         template['DESCRIÇÃO MATERIAL'] = template['KEY'].map(mapa_pn)
         template['MDR'] = template['KEY'].map(mapa_mdr)  # reforça MDR correto do KEY
         template['DESCRIÇÃO DA EMBALAGEM'] = template['MDR'].map(mapa_descricao_mdr)
@@ -355,8 +452,6 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
         template['PESO MDR'] = round(template['QTD EMBALAGENS'] * template['MDR'].map(mapa_peso_mdr), 1)
         template['PESO TOTAL'] = template['PESO MAT'] + template['PESO MDR']
 
-
-        print(template['FORNECEDOR'])
 
         template = template[['COD FORNECEDOR', 'FORNECEDOR', 'COD DESTINO', 'DESENHO', 'QTDE', 'DESCRIÇÃO MATERIAL',
                              'MDR', 'DESCRIÇÃO DA EMBALAGEM', 'QME', 'QTD EMBALAGENS', 'TIPO SATURACAO',
@@ -429,6 +524,8 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
             return capacidade_series.values[0]
 
         def obter_capacidade_por_linha_veic_anterior(row):
+
+            print(row)
             mdr = str(row['EMBALAGEM']).upper()
             cod_veic = int(row['VEICULO'])
             veic_anterior = obter_veiculo_anterior(cod_veic)
@@ -459,8 +556,13 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
 
         df_saturacao['CAPACIDADE'] = df_saturacao.apply(obter_capacidade_por_linha, axis=1)
         df_saturacao['VEICULO'] = df_saturacao['VEICULO'].fillna(0)
-        df_saturacao['VEICULO'] = df_saturacao['VEICULO'].astype(int)  
+        df_saturacao['VEICULO'] = df_saturacao['VEICULO'].astype(int) 
+
+
+        
         df_saturacao['CAPACIDADE_VEIC_ANTERIOR'] = df_saturacao.apply(obter_capacidade_por_linha_veic_anterior, axis=1)
+
+
         df_saturacao['SATURAÇÃO COM VEÍCULO MENOR (%)'] = round(
             df_saturacao['CXS/PALLETS_TOTAL'] / df_saturacao['CAPACIDADE_VEIC_ANTERIOR'] * 100, 2
         )
@@ -591,13 +693,21 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
 
 def consolidar_dados():
     # Carrega os dados
-    fluxos =  os.path.join(caminho_base,"BD","FLUXO.xlsx")
-    fluxos = pd.read_excel(fluxos,sheet_name='FLUXOS')
+    fluxos_path = os.path.join(caminho_base, "BD", "FLUXO.xlsx")
+    fluxos = pd.read_excel(fluxos_path, sheet_name='FLUXOS')
     template = pd.read_excel('VIAJANTE.xlsx', sheet_name='Template Completo')
 
-    # Filtra linhas com quantidade válida
-    template = template[template['QTDE'] > 0]
+    # Filtra linhas com quantidade válida e prepara as colunas
+    template = template[template['QTDE'] > 0].copy() # Use .copy() to avoid SettingWithCopyWarning
     template['COD FORNECEDOR'] = template['COD FORNECEDOR'].astype(str)
+
+    # print(f"Template before check: {template['FORNECEDOR']}")  # Debugging line to check columns
+
+    # --- FIX: Ensure the supplier name column is also a string ---
+    template['FORNECEDOR'] = template['FORNECEDOR'].fillna('').astype(str)
+
+    # print(f"Template after check: {template['FORNECEDOR']}")  # Debugging line to check columns
+
 
     def normalizar_codigos(campo):
         if pd.isna(campo):
@@ -637,26 +747,32 @@ def consolidar_dados():
                 else:
                     saturacao_total = linhas_rota['SAT PESO (%)'].sum()
 
+                # print(f"IN DB check--------------------{fornecedores_comuns}") # This can be removed if not needed
                 nomes_fornecedores = linhas_rota[['COD FORNECEDOR', 'FORNECEDOR']].drop_duplicates()
                 nomes_fornecedores['COD FORNECEDOR'] = nomes_fornecedores['COD FORNECEDOR'].astype(str)
+
+                # print(f"FORNECEDORES NAMES CHECK: {nomes_fornecedores}")  # Debugging line to check the DataFrame
+                # This line is now safe because 'FORNECEDOR' column contains only strings
                 nomes_ordenados = nomes_fornecedores.set_index('COD FORNECEDOR').loc[fornecedores_comuns]['FORNECEDOR'].tolist()
 
-                cargas = ceil(saturacao_total / 100)
 
-                
+                # print(f"FORNECEDORES NAMES CHECK: {nomes_ordenados}")
+
+
+                cargas = ceil(saturacao_total / 100) if saturacao_total > 0 else 0
+
                 # --- Coluna de Sugestão ---
                 saturacao_residual = saturacao_total % 100
-                if saturacao_residual <= 2:
+                if cargas > 0 and saturacao_residual <= 2:
                     sugestao = "Cortar coleta do último veículo"
-                elif saturacao_residual <= 50:
+                elif cargas > 0 and saturacao_residual <= 50:
                     sugestao = "Alterar último veículo para menor porte"
                 else:
                     sugestao = "Manter coleta"
 
                 # --- Apuração de MDR ---
                 coluna_sat = 'SAT VOLUME (%)' if tipo_saturacao.upper() == 'VOLUME' else 'SAT PESO (%)'
-
-                # Todos os desenhos esperados para essa rota (com base nos fornecedores)
+                
                 linhas_template_todas = subset_template[
                     subset_template['COD FORNECEDOR'].astype(str).isin(fornecedores_comuns)]
 
@@ -689,8 +805,6 @@ def consolidar_dados():
 
     df_volume = pd.DataFrame(dados_volume)
     df_volume.to_excel('Volume_por_rota.xlsx', index=False)
-
-
 #tree = ttk.Treeview()
 #tree_resumo = ttk.Treeview()
 #completar_informacoes(tree,3, tree_resumo)
