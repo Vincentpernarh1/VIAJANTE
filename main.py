@@ -86,7 +86,6 @@ def input_demanda(cod_destino):
 
     df = df[['COD FORNECEDOR','COD IMS', 'COD DESTINO', 'DESENHO', 'QTDE', 'VEICULO', 'TIPO SATURACAO']]
     df.to_excel("Template.xlsx", index=False)
-    print("Template.xlsx")
 
 def apply_filters(event=None):
     """
@@ -275,7 +274,6 @@ def atualizar():
                 combo['values'] = ["-- All --"] + unique_values
                 combo.set('')
             # --- END: FILTER LOGIC ---
-            print("check erro ststus--------------------")
             consolidar_dados()
     except Exception as e:
         print(f"Ocorreu um erro durante a atualização: {e}")

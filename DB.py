@@ -9,9 +9,15 @@ from PIL import Image, ImageTk
 import traceback
 import os
 import numpy as np
-import warnings # <-- 1. Import the library
+import warnings 
+import contextlib
 
-# 2. Add these lines to ignore the specific warnings from the Excel reader
+# Suppress xlrd / Excel warnings
+warnings.simplefilter("ignore")
+
+# Optionally suppress all print output from the engine
+with contextlib.redirect_stdout(None), contextlib.redirect_stderr(None):
+    df = pd.read_excel("Template.xlsx", engine="openpyxl")
 warnings.filterwarnings(
     "ignore",
     category=UserWarning,
@@ -421,11 +427,13 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
         mapa_peso_mdr = db_MDR.drop_duplicates('MDR').set_index('MDR')['MDR PESO']
         mapa_peso_max = db_veiculos.set_index('COD VEICULO')['PESO MAXIMO']
 
+        # --- Enriquecimento do template ---
 
         # Passo 1: primeiro trazer MDR pelo DESENHO, para podermos montar a KEY
         template['MDR'] = template['DESENHO'].map(
             db_PN.drop_duplicates('DESENHO').set_index('DESENHO')['MDR']
         )
+
 
         # Passo 2: agora que já temos MDR no template, podemos montar a KEY
         template['KEY'] = template['DESENHO'].astype(str) + '_' + template['MDR'].astype(str)
@@ -433,13 +441,14 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
 
         # Passo 3: enriquecer com os mapas
         template['PESO_MAXIMO'] = template['VEICULO'].map(mapa_peso_max)
-        template['MAP_KEY'] = template['COD IMS'].fillna(template['COD FORNECEDOR'])
-        # .apply(split_key_logic)
+        template['MAP_KEY'] = (template['COD IMS'].fillna(template['COD FORNECEDOR']).astype(str).str.split('/').str[0] )
+
+       
+        template['MAP_KEY'] = pd.to_numeric(template['MAP_KEY'], errors='coerce')
         template['FORNECEDOR'] =template['MAP_KEY'].map(mapa_fornecedores)
        
         template = template.drop(columns=['MAP_KEY'])
        
-
         template['DESCRIÇÃO MATERIAL'] = template['KEY'].map(mapa_pn)
         template['MDR'] = template['KEY'].map(mapa_mdr)  # reforça MDR correto do KEY
         template['DESCRIÇÃO DA EMBALAGEM'] = template['MDR'].map(mapa_descricao_mdr)
@@ -525,7 +534,6 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
 
         def obter_capacidade_por_linha_veic_anterior(row):
 
-            print(row)
             mdr = str(row['EMBALAGEM']).upper()
             cod_veic = int(row['VEICULO'])
             veic_anterior = obter_veiculo_anterior(cod_veic)
@@ -556,12 +564,8 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
 
         df_saturacao['CAPACIDADE'] = df_saturacao.apply(obter_capacidade_por_linha, axis=1)
         df_saturacao['VEICULO'] = df_saturacao['VEICULO'].fillna(0)
-        df_saturacao['VEICULO'] = df_saturacao['VEICULO'].astype(int) 
-
-
-        
+        df_saturacao['VEICULO'] = df_saturacao['VEICULO'].astype(int)         
         df_saturacao['CAPACIDADE_VEIC_ANTERIOR'] = df_saturacao.apply(obter_capacidade_por_linha_veic_anterior, axis=1)
-
 
         df_saturacao['SATURAÇÃO COM VEÍCULO MENOR (%)'] = round(
             df_saturacao['CXS/PALLETS_TOTAL'] / df_saturacao['CAPACIDADE_VEIC_ANTERIOR'] * 100, 2
@@ -701,12 +705,9 @@ def consolidar_dados():
     template = template[template['QTDE'] > 0].copy() # Use .copy() to avoid SettingWithCopyWarning
     template['COD FORNECEDOR'] = template['COD FORNECEDOR'].astype(str)
 
-    # print(f"Template before check: {template['FORNECEDOR']}")  # Debugging line to check columns
 
     # --- FIX: Ensure the supplier name column is also a string ---
     template['FORNECEDOR'] = template['FORNECEDOR'].fillna('').astype(str)
-
-    # print(f"Template after check: {template['FORNECEDOR']}")  # Debugging line to check columns
 
 
     def normalizar_codigos(campo):
@@ -725,6 +726,8 @@ def consolidar_dados():
 
         rotas_destino = fluxos[fluxos['COD DESTINO'].astype(str).str.contains(str(cod_dest))]
 
+       
+        
         for _, rota in rotas_destino.iterrows():
             cod_fluxo = rota['COD FLUXO']
             destino = rota['NOME DESTINO']
@@ -747,16 +750,13 @@ def consolidar_dados():
                 else:
                     saturacao_total = linhas_rota['SAT PESO (%)'].sum()
 
-                # print(f"IN DB check--------------------{fornecedores_comuns}") # This can be removed if not needed
                 nomes_fornecedores = linhas_rota[['COD FORNECEDOR', 'FORNECEDOR']].drop_duplicates()
                 nomes_fornecedores['COD FORNECEDOR'] = nomes_fornecedores['COD FORNECEDOR'].astype(str)
 
-                # print(f"FORNECEDORES NAMES CHECK: {nomes_fornecedores}")  # Debugging line to check the DataFrame
-                # This line is now safe because 'FORNECEDOR' column contains only strings
                 nomes_ordenados = nomes_fornecedores.set_index('COD FORNECEDOR').loc[fornecedores_comuns]['FORNECEDOR'].tolist()
 
 
-                # print(f"FORNECEDORES NAMES CHECK: {nomes_ordenados}")
+              
 
 
                 cargas = ceil(saturacao_total / 100) if saturacao_total > 0 else 0
