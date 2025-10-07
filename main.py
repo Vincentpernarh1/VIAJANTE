@@ -7,6 +7,19 @@ from DB import completar_informacoes, consolidar_dados, Processar_Demandas
 import pandas as pd
 import re
 import os
+import sys
+
+
+def resource_path(relative_path):
+    """Get absolute path to resource, works for dev and for PyInstaller"""
+    if hasattr(sys, '_MEIPASS'):
+        # When running from the .exe
+        return os.path.join(sys._MEIPASS, relative_path)
+    else:
+        # When running from source
+        return os.path.join(os.path.abspath("."), relative_path)
+
+
 
 import warnings # <-- 1. Import the library
 
@@ -126,7 +139,7 @@ veiculos_dict = {
 
 janela = Tk()
 try:
-    img = Image.open("carreta.png").resize((140, 100))
+    img = Image.open(resource_path("carreta.png")).resize((140, 100))
     caminhao_img = ImageTk.PhotoImage(img)
 except Exception as e:
     print(f"Erro ao carregar imagem da carreta: {e}")
