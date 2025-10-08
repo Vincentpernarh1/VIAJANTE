@@ -9,7 +9,6 @@ import re
 import os
 import sys
 
-
 def resource_path(relative_path):
     """Get absolute path to resource, works for dev and for PyInstaller"""
     if hasattr(sys, '_MEIPASS'):
@@ -18,8 +17,6 @@ def resource_path(relative_path):
     else:
         # When running from source
         return os.path.join(os.path.abspath("."), relative_path)
-
-
 
 import warnings # <-- 1. Import the library
 
@@ -39,30 +36,116 @@ warnings.filterwarnings(
     message="^WARNING .*" # Hides the file size warnings which don't have a category
 )
 
-
-
 caminho_base = os.getcwd()
 # --- START: Global variables for filtering ---
 # Stores the complete, unfiltered data from the Treeview
-original_tree_data = [] 
+original_tree_data = []
 # A dictionary to hold the filter Combobox widgets
 filter_widgets = {}
 # --- END: Global variables ---
+
+
+# ------------------- carregar veículos dinâmicos -------------------
+def load_veiculos(caminho_base):
+    """
+    Tries to load VEÍCULOS.xlsx (or VEICULOS.xlsx) from caminho_base/BD and returns a dict:
+    {descricao_stripped: codigo_int_or_str}
+    If the file or expected columns are not found, returns None.
+    Only returns the display mapping (original descriptions -> code).
+    """
+    possible_files = [
+        os.path.join(caminho_base, "BD", "VEÍCULOS.xlsx"),
+        os.path.join(caminho_base, "BD", "VEICULOS.xlsx"),
+        os.path.join(caminho_base, "BD", "Veiculos.xlsx"),
+        os.path.join(caminho_base, "BD", "VEICULOS.xls")
+    ]
+    for fpath in possible_files:
+        if os.path.exists(fpath):
+            try:
+                df_veh = pd.read_excel(fpath, sheet_name=0, dtype=str)  # read as str to be safe
+                # normalize column names (case-insensitive)
+                cols = {c.strip().upper(): c for c in df_veh.columns}
+                # find code column (prefer "COD VEICULO" or similar)
+                code_col = None
+                desc_col = None
+                for key_upper, orig in cols.items():
+                    if "COD" in key_upper and "VEIC" in key_upper:
+                        code_col = orig
+                    if "DESCR" in key_upper or "DESC" in key_upper:
+                        desc_col = orig
+                # fallback: use first column as code and second (or next) as desc
+                if code_col is None and len(df_veh.columns) >= 1:
+                    code_col = df_veh.columns[0]
+                if desc_col is None and len(df_veh.columns) >= 2:
+                    # try second column
+                    desc_col = df_veh.columns[1]
+                if code_col is None or desc_col is None:
+                    # can't map properly from this file
+                    continue
+                veic_map = {}
+                for _, r in df_veh.iterrows():
+                    desc = str(r.get(desc_col, "")).strip()
+                    code_raw = r.get(code_col, "")
+                    # try to convert code to int if possible, else keep as string
+                    try:
+                        code = int(float(str(code_raw).strip()))
+                    except Exception:
+                        code = str(code_raw).strip()
+                    if desc:
+                        # store only the original description as display key
+                        if desc not in veic_map:
+                            veic_map[desc] = code
+                if veic_map:
+                    print(f"[INFO] Loaded {len(veic_map)} vehicles from {fpath}")
+                    return veic_map
+            except Exception as e:
+                print(f"[WARN] Could not read vehicles file {fpath}: {e}")
+    # If we get here, no good file found
+    return None
+
+# Keep your original static mapping as a fallback so behavior remains unchanged if file is missing.
+_FALLBACK_VEICULOS_DISPLAY = {
+    'BIG SIDER': 6, 'BITREM': 7, 'CARRETA': 4, 'CARRETA LINE HAUL': 14,
+    'CARRETA REBAIXADA': 9, 'CTNR 20': 15, 'CTNR 40': 16, 'FIORINO': 11,
+    'RODOTREM': 8, 'TRUCK 3M': 3, 'TRUCK 3M ALONGADO': 18, 'TRUCK 3M PLUS': 13,
+    'TRUCK ALONGADO': 17, 'TRUCK VIAGEM': 2, 'TRUCK VIAGEM PLUS': 12, 'VAN': 10,
+    'VANDERLEA': 5, 'VEÍCULO 3/4': 1, 'TRUCK SIDER': 2
+}
+
+# load display dict (used for labels) and build lookup dict (case-insensitive) used for mapping
+veiculos_display = load_veiculos(caminho_base) or _FALLBACK_VEICULOS_DISPLAY
+# build lookup dict (includes uppercase keys for robustness)
+veiculos_lookup = {}
+for k, v in veiculos_display.items():
+    veiculos_lookup[k] = v
+    veiculos_lookup[k.upper()] = v
+# ------------------------------------------------------------------
+
+
+def get_vehicle_code(nome_veiculo):
+    """
+    Robust lookup: try exact name, stripped, upper-case, and finally fallback to None.
+    Uses veiculos_lookup (built from the display mapping).
+    """
+    if nome_veiculo is None:
+        return None
+    s = str(nome_veiculo).strip()
+    if s in veiculos_lookup:
+        return veiculos_lookup[s]
+    su = s.upper()
+    if su in veiculos_lookup:
+        return veiculos_lookup[su]
+    return None
+
 
 def normalizar_codigos(campo):
     if pd.isna(campo):
         return []
     return re.split(r'\s*/\s*', str(campo).strip())
 
-def input_demanda(cod_destino):
-    veiculos_dict = {
-        'BIG SIDER': 6, 'BITREM': 7, 'CARRETA': 4, 'CARRETA LINE HAUL': 14,
-        'CARRETA REBAIXADA': 9, 'CTNR 20': 15, 'CTNR 40': 16, 'FIORINO': 11,
-        'RODOTREM': 8, 'TRUCK 3M': 3, 'TRUCK 3M ALONGADO': 18, 'TRUCK 3M PLUS': 13,
-        'TRUCK ALONGADO': 17, 'TRUCK VIAGEM': 2, 'TRUCK VIAGEM PLUS': 12, 'VAN': 10,
-        'VANDERLEA': 5, 'VEÍCULO 3/4': 1
-    }
 
+def input_demanda(cod_destino):
+    # REMOVED local veiculos_dict here so it uses global veiculos_lookup via get_vehicle_code
     fluxos =  os.path.join(caminho_base,"BD","FLUXO.xlsx")
     db_fluxos = pd.read_excel(fluxos, sheet_name='FLUXOS')
     df = Processar_Demandas(cod_destino)
@@ -84,7 +167,8 @@ def input_demanda(cod_destino):
 
             if cod_forn in cods_sap and cod_dest in cods_dest:
                 nome_veiculo = linha_fluxo["VEICULO PRINCIPAL"]
-                codigo = veiculos_dict.get(nome_veiculo, None)
+                # lookup via dynamic dictionary (or fallback)
+                codigo = get_vehicle_code(nome_veiculo)
                 tipo = linha_fluxo.get("TIPO SATURACAO", None)
                 cod_ims = linha_fluxo.get("COD IMS", None)
                 break
@@ -99,6 +183,7 @@ def input_demanda(cod_destino):
 
     df = df[['COD FORNECEDOR','COD IMS', 'COD DESTINO', 'DESENHO', 'QTDE', 'VEICULO', 'TIPO SATURACAO']]
     df.to_excel("Template.xlsx", index=False)
+
 
 def apply_filters(event=None):
     """
@@ -129,14 +214,12 @@ def apply_filters(event=None):
         if match:
             tree.insert("", END, values=row_values)
 
-veiculos_dict = {
-    'BIG SIDER': 6, 'BITREM': 7, 'CARRETA': 4, 'CARRETA LINE HAUL': 14,
-    'CARRETA REBAIXADA': 9, 'CTNR 20': 15, 'CTNR 40': 16, 'FIORINO': 11,
-    'RODOTREM': 8, 'TRUCK 3M': 3, 'TRUCK 3M ALONGADO': 18, 'TRUCK 3M PLUS': 13,
-    'TRUCK ALONGADO': 17, 'TRUCK VIAGEM': 2, 'TRUCK VIAGEM PLUS': 12, 'VAN': 10,
-    'VANDERLEA': 5, 'VEÍCULO 3/4': 1
-}
 
+# Use veiculos_display for UI labels (no duplicate uppercase keys)
+veiculos_dict = veiculos_display.copy()
+
+
+# --------------------- GUI (mantive seu design e cores originais) ---------------------
 janela = Tk()
 try:
     img = Image.open(resource_path("carreta.png")).resize((140, 100))
@@ -182,6 +265,7 @@ style.map("Vehicle.Toolbutton", background=[('active', '#e0e0e0'), ('selected', 
           foreground=[('selected', 'white')])
 
 colunas = 3
+# build radio buttons from veiculos_dict (which is the display dict)
 for i, (nome, cod) in enumerate(sorted(veiculos_dict.items())):
     rb = ttk.Radiobutton(frame_veiculos, text=nome, variable=veiculo_var,
                          value=str(cod), style="Vehicle.Toolbutton")
