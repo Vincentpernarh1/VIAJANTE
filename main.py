@@ -8,6 +8,7 @@ import pandas as pd
 import re
 import os
 import sys
+import threading
 
 def resource_path(relative_path):
     """Get absolute path to resource, works for dev and for PyInstaller"""
@@ -284,7 +285,9 @@ Label(frame_selecao, text="Cód. Destino:", font=("Arial", 10)).grid(row=2, colu
 cod_destino_var = StringVar(value='1080')
 
 def validate_numeric(P):
-    return P.isdigit() or P == ""
+    # Allow digits, commas, and optional spaces
+    return all(c.isdigit() or c in [',', ' '] for c in P)
+
 
 vcmd = (janela.register(validate_numeric), '%P')
 entry_cod_destino = Entry(frame_selecao, textvariable=cod_destino_var, width=10, validate="key", validatecommand=vcmd)
@@ -323,58 +326,101 @@ style.configure("Treeview.Heading", background="#007acc", foreground="white",
                 font=("Arial", 10, "bold"), relief="flat")
 style.map("Treeview.Heading", background=[('active', '#005f9e')])
 
+
+
+
 def atualizar():
+    # --- Start spinner ---
+    start_loading()
+
+    def processar():
+        try:
+            cod_destino_str = cod_destino_var.get()
+            try:
+                cod_destino_values = [int(code.strip()) for code in cod_destino_str.split(',') if code.strip().isdigit()]
+                if not cod_destino_values:
+                    cod_destino_values = [1080]  # fallback if empty
+            except ValueError:
+                cod_destino_values = [1080]
+
+            cod = veiculo_var.get()
+            label_veiculo.config(text=f"Código selecionado: {cod}")
+
+            if cod:
+                for code in cod_destino_values:
+                    input_demanda(code)
+
+                completar_informacoes(
+                    tree, int(cod), tree_resumo, canvas_caminhoes, caminhao_img, usar_manual=modo_manual.get()
+                )
+
+                global original_tree_data
+                original_tree_data = [tree.item(child)['values'] for child in tree.get_children()]
+
+                columns_to_filter = ['COD FORNECEDOR', 'FORNECEDOR', 'DESENHO']
+                all_table_columns = list(tree["columns"])
+
+                if not filter_widgets:
+                    for widget in frame_filters.winfo_children():
+                        widget.destroy()
+
+                    for col_id in columns_to_filter:
+                        if col_id in all_table_columns:
+                            col_frame = Frame(frame_filters)
+                            col_frame.pack(side=LEFT, padx=2, fill=X, expand=True)
+                            Label(col_frame, text=col_id, font=("Arial", 8)).pack(anchor='w')
+                            combo = ttk.Combobox(col_frame, font=("Arial", 9))
+                            combo.pack(fill=X)
+                            combo.bind('<KeyRelease>', apply_filters)
+                            combo.bind('<<ComboboxSelected>>', apply_filters)
+                            filter_widgets[col_id] = combo
+
+                for col_id, combo in filter_widgets.items():
+                    col_index = all_table_columns.index(col_id)
+                    unique_values = sorted(
+                        list(set(str(row[col_index]) for row in original_tree_data if str(row[col_index]).strip()))
+                    )
+                    combo['values'] = ["-- All --"] + unique_values
+                    combo.set('')
+
+                consolidar_dados()
+
+            # --- Stop spinner and show success ---
+            loading_label.spinning = False
+            janela.after(0, lambda: finalizar_status("Concluído com sucesso!", "#2e8b57"))
+
+        except Exception as e:
+            print(f"Ocorreu um erro durante a atualização: {e}")
+            loading_label.spinning = False
+            janela.after(0, lambda: finalizar_status(f"Erro: {e}", "red"))
+
+    threading.Thread(target=processar, daemon=True).start()
+
+
+
+def start_loading():
+    spinner_chars = ['|', '/', '--', '\\']
     loading_label.place(relx=0.5, rely=0.5, anchor='center')
     loading_label.lift()
     janela.update_idletasks()
 
-    try:
-        cod_destino_str = cod_destino_var.get()
-        cod_destino_value = int(cod_destino_str) if cod_destino_str.isdigit() else 1080
-        cod = veiculo_var.get()
-        label_veiculo.config(text=f"Código selecionado: {cod}")
+    def spin():
+        i = 0
+        while getattr(loading_label, "spinning", False):
+            loading_label.config(text=f"Processando... {spinner_chars[i % len(spinner_chars)]}")
+            i += 1
+            janela.update_idletasks()
+            threading.Event().wait(0.1)  # short delay for animation
 
-        if cod:
-            input_demanda(cod_destino_value)
-            completar_informacoes(tree, int(cod), tree_resumo, canvas_caminhoes, caminhao_img, usar_manual=modo_manual.get())
-            
-            # --- START: LOGIC FOR SPECIFIC DROPDOWN FILTERS ---
-            global original_tree_data
-            original_tree_data = [tree.item(child)['values'] for child in tree.get_children()]
-            
-            # Define which columns should have a filter
-            columns_to_filter = ['COD FORNECEDOR', 'FORNECEDOR', 'DESENHO']
-            all_table_columns = list(tree["columns"])
+    loading_label.spinning = True
+    threading.Thread(target=spin, daemon=True).start()
 
-            # Create the filter widgets only once
-            if not filter_widgets:
-                # Clear any old widgets from the frame in case columns change
-                for widget in frame_filters.winfo_children():
-                    widget.destroy()
+  
+def finalizar_status(msg, color):
+    """Atualiza o texto e esconde após 2 segundos"""
+    loading_label.config(text=msg, fg=color)
+    janela.after(2000, loading_label.place_forget)
 
-                for col_id in columns_to_filter:
-                    # Only create a filter if the column actually exists in the table
-                    if col_id in all_table_columns:
-                        col_frame = Frame(frame_filters)
-                        col_frame.pack(side=LEFT, padx=2, fill=X, expand=True)
-                        Label(col_frame, text=col_id, font=("Arial", 8)).pack(anchor='w')
-                        combo = ttk.Combobox(col_frame, font=("Arial", 9))
-                        combo.pack(fill=X)
-                        combo.bind('<KeyRelease>', apply_filters)
-                        combo.bind('<<ComboboxSelected>>', apply_filters)
-                        filter_widgets[col_id] = combo
-
-            # Update dropdown values for the existing filter widgets
-            for col_id, combo in filter_widgets.items():
-                col_index = all_table_columns.index(col_id)
-                unique_values = sorted(list(set(str(row[col_index]) for row in original_tree_data if str(row[col_index]).strip())))
-                combo['values'] = ["-- All --"] + unique_values
-                combo.set('')
-            # --- END: FILTER LOGIC ---
-            consolidar_dados()
-    except Exception as e:
-        print(f"Ocorreu um erro durante a atualização: {e}")
-    finally:
-        loading_label.place_forget()
 
 janela.mainloop()
+

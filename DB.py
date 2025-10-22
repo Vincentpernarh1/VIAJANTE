@@ -399,8 +399,6 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
 
         db_efi = pd.read_excel(db_efi,sheet_name='BD')
 
-
-
         # --- Normalização de tipos ---
         db_PN['DESENHO ATUALIZAÇÃO'] = pd.to_datetime(db_PN['DESENHO ATUALIZAÇÃO'], errors='coerce')
         db_MDR['VOLUME'] = pd.to_numeric(db_MDR['VOLUME'], errors='coerce')
@@ -687,6 +685,19 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
                     cell.font = header_font
                     cell.alignment = header_align
 
+            if 'MDR' in template.columns:
+                pn_nao_cadastrados = template[
+                    template['MDR'].isna() | (template['MDR'].astype(str).str.strip() == '')
+                ].copy()
+
+                # select only the requested columns if they exist in the dataframe
+                cols_to_keep = ['COD FORNECEDOR', 'FORNECEDOR', 'COD DESTINO', 'DESENHO']
+                existing_cols = [c for c in cols_to_keep if c in pn_nao_cadastrados.columns]
+
+                if not pn_nao_cadastrados.empty and existing_cols:
+                    pn_nao_cadastrados = pn_nao_cadastrados[existing_cols]
+                    pn_nao_cadastrados.drop_duplicates(subset=["DESENHO"], inplace=True)
+                    pn_nao_cadastrados.to_excel(writer, sheet_name='PN Não Cadastrados', index=False)
 
     except Exception as e:
 
