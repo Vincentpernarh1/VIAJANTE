@@ -565,6 +565,8 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
         df_saturacao['VEICULO'] = df_saturacao['VEICULO'].astype(int)         
         df_saturacao['CAPACIDADE_VEIC_ANTERIOR'] = df_saturacao.apply(obter_capacidade_por_linha_veic_anterior, axis=1)
 
+        
+
         df_saturacao['SATURAÇÃO COM VEÍCULO MENOR (%)'] = round(
             df_saturacao['CXS/PALLETS_TOTAL'] / df_saturacao['CAPACIDADE_VEIC_ANTERIOR'] * 100, 2
         )

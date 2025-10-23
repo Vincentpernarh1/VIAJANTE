@@ -145,45 +145,56 @@ def normalizar_codigos(campo):
     return re.split(r'\s*/\s*', str(campo).strip())
 
 
-def input_demanda(cod_destino):
-    # REMOVED local veiculos_dict here so it uses global veiculos_lookup via get_vehicle_code
-    fluxos =  os.path.join(caminho_base,"BD","FLUXO.xlsx")
+def input_demanda(cod_destinos):
+    """
+    cod_destinos: list of codes entered by the user, e.g. [1080, 1046]
+    Returns a DataFrame with all matched rows, saving full COD DESTINO values.
+    """
+    fluxos = os.path.join(caminho_base, "BD", "FLUXO.xlsx")
     db_fluxos = pd.read_excel(fluxos, sheet_name='FLUXOS')
-    df = Processar_Demandas(cod_destino)
+    
+    all_rows = []  # collect all rows here
 
-    cod_veiculos = []
-    tipos_saturacao = []
-    cod_fornecedor = []
+    # ensure cod_destinos is a list of strings
+    cod_destinos = [str(c).strip() for c in cod_destinos]
 
-    for _, row in df.iterrows():
-        cod_forn = str(row["COD FORNECEDOR"])
-        cod_dest = str(row["COD DESTINO"])
-        codigo = None
-        tipo = None
-        cod_ims = None
+    for cod_dest in cod_destinos:
+        df = Processar_Demandas(cod_dest)
+        
+        for _, row in df.iterrows():
+            cod_forn = str(row["COD FORNECEDOR"]).strip()
+            codigo = None
+            tipo = None
+            cod_ims = None
+            cod_dest_full = cod_dest  # default
 
-        for _, linha_fluxo in db_fluxos.iterrows():
-            cods_sap = normalizar_codigos(linha_fluxo["COD FORNECEDOR"])
-            cods_dest = normalizar_codigos(linha_fluxo["COD DESTINO"])
+            for _, linha_fluxo in db_fluxos.iterrows():
+                cods_sap = normalizar_codigos(linha_fluxo["COD FORNECEDOR"])
+                cods_dest_raw = str(linha_fluxo["COD DESTINO"]).strip()
+                cods_dest_split = re.split(r'\s*/\s*', cods_dest_raw)
 
-            if cod_forn in cods_sap and cod_dest in cods_dest:
-                nome_veiculo = linha_fluxo["VEICULO PRINCIPAL"]
-                # lookup via dynamic dictionary (or fallback)
-                codigo = get_vehicle_code(nome_veiculo)
-                tipo = linha_fluxo.get("TIPO SATURACAO", None)
-                cod_ims = linha_fluxo.get("COD IMS", None)
-                break
+                if cod_forn in cods_sap and cod_dest in cods_dest_split:
+                    nome_veiculo = linha_fluxo["VEICULO PRINCIPAL"]
+                    codigo = get_vehicle_code(nome_veiculo)
+                    tipo = linha_fluxo.get("TIPO SATURACAO", None)
+                    cod_ims = linha_fluxo.get("COD IMS", None)
+                    cod_dest_full = cods_dest_raw
+                    break
 
-        cod_veiculos.append(codigo)
-        tipos_saturacao.append(tipo)
-        cod_fornecedor.append(cod_ims)
+            # append full row data
+            all_rows.append({
+                "COD FORNECEDOR": cod_forn,
+                "COD IMS": cod_ims,
+                "COD DESTINO": cod_dest_full,
+                "DESENHO": row["DESENHO"],
+                "QTDE": row["QTDE"],
+                "VEICULO": codigo,
+                "TIPO SATURACAO": tipo
+            })
 
-    df["VEICULO"] = cod_veiculos
-    df["TIPO SATURACAO"] = tipos_saturacao
-    df["COD IMS"] = cod_fornecedor
-
-    df = df[['COD FORNECEDOR','COD IMS', 'COD DESTINO', 'DESENHO', 'QTDE', 'VEICULO', 'TIPO SATURACAO']]
-    df.to_excel("Template.xlsx", index=False)
+    df_final = pd.DataFrame(all_rows)
+    df_final.to_excel("Template.xlsx", index=False)
+    return df_final  # optionally return for further processing
 
 
 def apply_filters(event=None):
@@ -347,8 +358,9 @@ def atualizar():
             label_veiculo.config(text=f"Código selecionado: {cod}")
 
             if cod:
-                for code in cod_destino_values:
-                    input_demanda(code)
+                # split input codes by comma
+                cod_destino_values = [c.strip() for c in cod_destino_var.get().split(',') if c.strip()]
+                df_final = input_demanda(cod_destino_values)  # all codes processed together
 
                 completar_informacoes(
                     tree, int(cod), tree_resumo, canvas_caminhoes, caminhao_img, usar_manual=modo_manual.get()
