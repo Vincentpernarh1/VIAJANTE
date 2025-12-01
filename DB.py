@@ -659,9 +659,35 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
         tree.delete(*tree.get_children())
         tree["columns"] = list(template.columns)
         tree["show"] = "headings"
+        
+        # Define custom widths for specific columns - optimized for scrolling
+        column_widths = {
+            'COD FORNECEDOR': 110,
+            'FORNECEDOR': 150,
+            'COD DESTINO': 90,
+            'DESENHO': 90,
+            'QTDE': 70,
+            'DESCRIÇÃO MATERIAL': 200,
+            'MDR': 70,
+            'DESCRIÇÃO DA EMBALAGEM': 160,
+            'QME': 60,
+            'QTD EMBALAGENS': 110,
+            'TIPO SATURACAO': 90,
+            'VEICULO': 70,
+            'M³': 60,
+            'PESO MAT': 90,
+            'PESO MDR': 90,
+            'PESO TOTAL': 100,
+            'PESO_MAXIMO': 110,
+            'SAT VOLUME (%)': 110,
+            'SAT PESO (%)': 100,
+            'COD IMS': 90
+        }
+        
         for col in template.columns:
             tree.heading(col, text=col)
-            tree.column(col, width=130, anchor="center")
+            width = column_widths.get(col, 90)  # Default 90 if not specified
+            tree.column(col, width=width, anchor="center", stretch=False)
         for _, row in template.iterrows():
             tree.insert("", END, values=list(row))
 

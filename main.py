@@ -145,9 +145,10 @@ def normalizar_codigos(campo):
     return re.split(r'\s*/\s*', str(campo).strip())
 
 
-def input_demanda(cod_destinos):
+def input_demanda(cod_destinos, use_all_codes=False):
     """
     cod_destinos: list of codes entered by the user, e.g. [1080, 1046]
+    use_all_codes: if True, process all COD DESTINO found in demand files
     Returns a DataFrame with all matched rows, saving full COD DESTINO values.
     """
     fluxos = os.path.join(caminho_base, "BD", "FLUXO.xlsx")
@@ -155,8 +156,34 @@ def input_demanda(cod_destinos):
     
     all_rows = []  # collect all rows here
 
-    # ensure cod_destinos is a list of strings
-    cod_destinos = [str(c).strip() for c in cod_destinos]
+    # If use_all_codes is True, get all unique COD DESTINO from demand files
+    if use_all_codes:
+        # Get all unique COD DESTINO from processed demand files
+        unique_cod_destinos = set()
+        pasta_demandas = os.path.join(caminho_base, "Demandas")
+        
+        if os.path.isdir(pasta_demandas):
+            for nome_arquivo in os.listdir(pasta_demandas):
+                caminho_completo = os.path.join(pasta_demandas, nome_arquivo)
+                nome_arquivo_lower = nome_arquivo.lower()
+                
+                try:
+                    if nome_arquivo_lower.endswith((".xls", ".xlsx")):
+                        df_temp = pd.read_excel(caminho_completo)
+                        if 'COD DESTINO' in df_temp.columns:
+                            unique_cod_destinos.update(df_temp['COD DESTINO'].dropna().astype(str).unique())
+                except Exception as e:
+                    print(f"Erro ao ler COD DESTINO de {nome_arquivo}: {e}")
+        
+        if unique_cod_destinos:
+            cod_destinos = [str(c).strip() for c in unique_cod_destinos]
+            print(f"[INFO] Usando todos os COD DESTINO encontrados: {cod_destinos}")
+        else:
+            # Fallback to provided codes if none found
+            cod_destinos = [str(c).strip() for c in cod_destinos]
+    else:
+        # ensure cod_destinos is a list of strings
+        cod_destinos = [str(c).strip() for c in cod_destinos]
 
     for cod_dest in cod_destinos:
         df = Processar_Demandas(cod_dest)
@@ -242,38 +269,39 @@ except Exception as e:
 janela.title("VIAJANTE")
 janela.geometry("1400x700")
 janela.state('zoomed')
+janela.config(bg="#002855")
 
-frame_principal = Frame(janela)
-frame_principal.pack(fill=BOTH, expand=True)
+frame_principal = Frame(janela, bg="#002855")
+frame_principal.pack(fill=BOTH, expand=True, pady=(0, 0))
 
-loading_label = Label(frame_principal, text="Processando... Por favor, aguarde.",
-                      font=("Arial", 18, "bold"), bg="white", fg="#007acc",
-                      relief="solid", borderwidth=2)
-
-frame_top = Frame(frame_principal)
+frame_top = Frame(frame_principal, bg="#002855")
 frame_top.pack(fill=X, padx=10, pady=5)
 
-frame_top.grid_columnconfigure(0, weight=0)
-frame_top.grid_columnconfigure(1, weight=1)
+# Configure grid columns for proper spacing
+frame_top.grid_columnconfigure(0, weight=0, minsize=500)
+frame_top.grid_columnconfigure(1, weight=1, minsize=360)
 frame_top.grid_columnconfigure(2, weight=0)
 
-frame_selecao = Frame(frame_top)
+frame_selecao = Frame(frame_top, bg="#002855")
 frame_selecao.grid(row=0, column=0, sticky='nw', padx=10)
 
-Label(frame_selecao, text="Selecione o tipo de veículo:", font=("Arial", 10)).grid(row=0, column=0, columnspan=3, pady=(0, 5), sticky='w')
+Label(frame_selecao, text="Selecione o tipo de veículo:", font=("Arial", 10, "bold"), bg="#002855", fg="#FFCC00").grid(row=0, column=0, columnspan=3, pady=(0, 3), sticky='w')
 
 veiculo_var = StringVar(value='')
-frame_veiculos = Frame(frame_selecao)
+frame_veiculos = Frame(frame_selecao, bg="#002855")
 frame_veiculos.grid(row=1, column=0, columnspan=3, sticky='w')
 
 style = ttk.Style()
 style.theme_use('clam')
-style.configure("Modern.TButton", font=("Arial", 11, "bold"), background="#007acc",
+style.configure("Modern.TButton", font=("Arial", 11, "bold"), background="#002855",
                 foreground="white", padding=(10, 5), borderwidth=0, relief="flat")
-style.map("Modern.TButton", background=[('active', '#005f9e'), ('!disabled', '#007acc')])
+style.map("Modern.TButton", background=[('active', '#004080'), ('!disabled', '#002855')])
+style.configure("Highlight.TButton", font=("Arial", 9, "bold"), background="#FFCC00",
+                foreground="#002855", padding=(12, 6), borderwidth=2, relief="raised")
+style.map("Highlight.TButton", background=[('active', '#FFD633'), ('!disabled', '#FFCC00')])
 style.configure("Vehicle.Toolbutton", padding=5, font=("Arial", 9), width=17,
-                anchor="center", relief="raised")
-style.map("Vehicle.Toolbutton", background=[('active', '#e0e0e0'), ('selected', '#007acc')],
+                anchor="center", relief="raised", background="#FFCC00")
+style.map("Vehicle.Toolbutton", background=[('active', '#FFD633'), ('selected', '#002855')],
           foreground=[('selected', 'white')])
 
 colunas = 3
@@ -281,63 +309,121 @@ colunas = 3
 for i, (nome, cod) in enumerate(sorted(veiculos_dict.items())):
     rb = ttk.Radiobutton(frame_veiculos, text=nome, variable=veiculo_var,
                          value=str(cod), style="Vehicle.Toolbutton")
-    rb.grid(row=i // colunas, column=i % colunas, sticky='w', padx=2, pady=2)
+    rb.grid(row=i // colunas, column=i % colunas, sticky='w', padx=2, pady=1)
 
-label_veiculo = Label(frame_selecao, text="")
-label_veiculo.grid(row=2, column=1, columnspan=3, pady=2)
+label_veiculo = Label(frame_selecao, text="", bg="#002855", fg="#FFCC00", font=("Arial", 9, "bold"))
+label_veiculo.grid(row=2, column=1, columnspan=3, pady=1)
+
+# Custom checkbox function to show dark checkmark
+def create_custom_checkbox(parent, text, variable, row, col):
+    frame = Frame(parent, bg="#002855")
+    frame.grid(row=row, column=col, columnspan=3, sticky='w', pady=(3,2))
+    
+    # Canvas for custom checkbox
+    canvas = Canvas(frame, width=16, height=16, bg="#002855", highlightthickness=0)
+    canvas.pack(side=LEFT, padx=(0, 5))
+    
+    # Draw checkbox background
+    canvas.create_rectangle(2, 2, 14, 14, fill="#FFCC00", outline="#FFCC00", tags="box")
+    
+    # Label for text
+    label = Label(frame, text=text, bg="#002855", fg="white", font=("Arial", 9))
+    label.pack(side=LEFT)
+    
+    def toggle():
+        variable.set(not variable.get())
+        update_display()
+    
+    def update_display():
+        canvas.delete("check")
+        if variable.get():
+            # Draw checkmark in dark blue
+            canvas.create_line(4, 8, 7, 11, fill="#002855", width=2, tags="check")
+            canvas.create_line(7, 11, 12, 4, fill="#002855", width=2, tags="check")
+    
+    canvas.bind("<Button-1>", lambda e: toggle())
+    label.bind("<Button-1>", lambda e: toggle())
+    
+    update_display()
+    return frame
+
 modo_manual = BooleanVar(value=False)
-check_manual = Checkbutton(frame_selecao, text="Usar veículo escolhido para todos", variable=modo_manual)
-check_manual.grid(row=2, column=0, columnspan=3, sticky='w', pady=(5,5))
+check_manual = create_custom_checkbox(frame_selecao, "Usar veículo escolhido para todos", modo_manual, 2, 0)
 
-btn_atualizar = ttk.Button(frame_selecao, text="Atualizar Dados",
-                           command=lambda: atualizar(), style="Modern.TButton")
+use_all_cod_destino = BooleanVar(value=False)
+check_all_cod = create_custom_checkbox(frame_selecao, "Usar todos os COD DESTINO dos arquivos", use_all_cod_destino, 3, 0)
 
-Label(frame_selecao, text="Cód. Destino:", font=("Arial", 10)).grid(row=2, column=5, pady=(10, 5), padx=(10, 0), sticky='e')
+# Create a frame for Cód. Destino and button on same row as second checkbox
+frame_cod_destino = Frame(frame_selecao, bg="#002855")
+frame_cod_destino.grid(row=3, column=3, columnspan=5, sticky='w', padx=(20, 0), pady=(0,3))
+
+Label(frame_cod_destino, text="Cód. Destino:", font=("Arial", 10, "bold"), bg="#002855", fg="#FFCC00").pack(side=LEFT)
 cod_destino_var = StringVar(value='1080')
 
 def validate_numeric(P):
     # Allow digits, commas, and optional spaces
-    return all(c.isdigit() or c in [',', ' '] for c in P)
+    return all(c.isdigit() or c in [',', ' ','/'] for c in P)
 
 
 vcmd = (janela.register(validate_numeric), '%P')
-entry_cod_destino = Entry(frame_selecao, textvariable=cod_destino_var, width=10, validate="key", validatecommand=vcmd)
-entry_cod_destino.grid(row=2, column=6, pady=(10, 5), sticky='w')
-btn_atualizar.grid(row=2, column=7, pady=(10, 5), padx=5, sticky="ew")
+entry_cod_destino = Entry(frame_cod_destino, textvariable=cod_destino_var, width=12, validate="key", validatecommand=vcmd)
+entry_cod_destino.pack(side=LEFT, padx=5)
 
-frame_caminhoes = Frame(frame_top)
-frame_caminhoes.grid(row=0, column=0, padx=(550, 0), sticky='nw')
-canvas_caminhoes = Canvas(frame_caminhoes, width=360, height=240)
+btn_atualizar = ttk.Button(frame_cod_destino, text="Atualizar Dados",
+                           command=lambda: atualizar(), style="Highlight.TButton")
+btn_atualizar.pack(side=LEFT, padx=5)
+
+frame_caminhoes = Frame(frame_top,  bg="#002855")
+frame_caminhoes.grid(row=0, column=0, sticky='ne', padx=(480, 0))
+canvas_caminhoes = Canvas(frame_caminhoes, width=450, height=250,  bg="#002855", highlightthickness=0)
 canvas_caminhoes.pack()
 
-frame_resumo = Frame(frame_top)
-frame_resumo.grid(row=0, column=2, sticky='ne', padx=20)
-tree_resumo = ttk.Treeview(frame_resumo, columns=("Info", "Valor"), show="headings", height=5)
+frame_resumo = Frame(frame_top, bg="#002855")
+frame_resumo.grid(row=0, column=1, sticky='ne', padx=20)
+
+tree_resumo = ttk.Treeview(frame_resumo, columns=("Info", "Valor"), show="headings", height=6)
 tree_resumo.heading("Info", text="Info")
 tree_resumo.heading("Valor", text="Valor")
-tree_resumo.column("Info", width=120, anchor='center')
-tree_resumo.column("Valor", width=100, anchor='center')
+tree_resumo.column("Info", width=140, anchor='center')
+tree_resumo.column("Valor", width=120, anchor='center')
+
+# Configure row height and font size for summary table
+style.configure("Treeview", rowheight=25, font=("Arial", 10))
+
 tree_resumo.pack()
 for item in ["Ocupação Total", "Qtd Veículos", "Volume Total", "Peso Total", "Embalagens"]:
     tree_resumo.insert("", END, values=(item, ""))
 
-frame_bottom = Frame(frame_principal)
-frame_bottom.pack(fill=BOTH, expand=True, padx=10, pady=(0, 10))
+frame_bottom = Frame(frame_principal, bg="white")
+frame_bottom.pack(fill=BOTH, expand=True, padx=10, pady=(0, 0))
 
-frame_filters = Frame(frame_bottom)
+# Loading label - position in data area
+loading_label = Label(frame_bottom, text="Processando... Por favor, aguarde.",
+                      font=("Arial", 14, "bold"), bg="#002855", fg="#FFCC00",
+                      relief="solid", borderwidth=2, padx=15, pady=8)
+
+frame_filters = Frame(frame_bottom, bg="#f0f0f0")
 frame_filters.pack(fill=X, pady=(5, 2))
 
-scroll_y = Scrollbar(frame_bottom, orient=VERTICAL)
+# Create a frame for the treeview with scrollbars
+tree_frame = Frame(frame_bottom, bg="white")
+tree_frame.pack(fill=BOTH, expand=True)
+
+scroll_y = Scrollbar(tree_frame, orient=VERTICAL)
 scroll_y.pack(side=RIGHT, fill=Y)
-tree = ttk.Treeview(frame_bottom, yscrollcommand=scroll_y.set)
+
+scroll_x = Scrollbar(tree_frame, orient=HORIZONTAL)
+scroll_x.pack(side=BOTTOM, fill=X)
+
+tree = ttk.Treeview(tree_frame, yscrollcommand=scroll_y.set, xscrollcommand=scroll_x.set)
 tree.pack(fill=BOTH, expand=True)
+
 scroll_y.config(command=tree.yview)
+scroll_x.config(command=tree.xview)
 
-style.configure("Treeview.Heading", background="#007acc", foreground="white",
-                font=("Arial", 10, "bold"), relief="flat")
-style.map("Treeview.Heading", background=[('active', '#005f9e')])
-
-
+style.configure("Treeview.Heading", background="#002855", foreground="#FFCC00",
+                font=("Arial", 8, "bold"), relief="flat")
+style.map("Treeview.Heading", background=[('active', '#004080')])
 
 
 def atualizar():
@@ -360,7 +446,9 @@ def atualizar():
             if cod:
                 # split input codes by comma
                 cod_destino_values = [c.strip() for c in cod_destino_var.get().split(',') if c.strip()]
-                df_final = input_demanda(cod_destino_values)  # all codes processed together
+                # Use all COD DESTINO if checkbox is checked
+                use_all = use_all_cod_destino.get()
+                df_final = input_demanda(cod_destino_values, use_all_codes=use_all)  # all codes processed together
 
                 completar_informacoes(
                     tree, int(cod), tree_resumo, canvas_caminhoes, caminhao_img, usar_manual=modo_manual.get()
@@ -430,9 +518,26 @@ def start_loading():
   
 def finalizar_status(msg, color):
     """Atualiza o texto e esconde após 2 segundos"""
-    loading_label.config(text=msg, fg=color)
+    if "sucesso" in msg.lower():
+        loading_label.config(text=msg, fg="#FFCC00", bg="#002855", relief="solid", borderwidth=2)
+    else:
+        loading_label.config(text=msg, fg="#FFCC00", bg="#002855", relief="solid", borderwidth=2)
     janela.after(2000, loading_label.place_forget)
 
+
+footer_frame = Frame(janela, bg="#002855", height=18)
+footer_frame.pack(side=BOTTOM, fill=X)
+footer_frame.pack_propagate(False)
+
+footer_left = Label(footer_frame, text="DHL → STELLANTIS", 
+                    font=("Arial", 7, "bold"), bg="#002855", fg="#FFCC00", 
+                    anchor="w", padx=8, pady=0)
+footer_left.pack(side=LEFT, fill=Y)
+
+footer_right = Label(footer_frame, text="Developer: Vincent Pernarh", 
+                     font=("Arial", 7), bg="#002855", fg="#FFCC00", 
+                     anchor="e", padx=8, pady=0)
+footer_right.pack(side=RIGHT, fill=Y)
 
 janela.mainloop()
 
