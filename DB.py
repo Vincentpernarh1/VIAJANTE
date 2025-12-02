@@ -38,10 +38,15 @@ warnings.filterwarnings(
 caminho_base = os.getcwd()
     
 
-def Processar_Demandas(cod_destino, pasta_demandas="Demandas"):
+def Processar_Demandas(cod_destino, pasta_demandas="Demandas", sheet_name=None):
     """
     Processa arquivos de demanda de uma pasta, tratando arquivos de texto/CSV
     e Excel de forma diferente, e os consolida em um único DataFrame.
+    
+    Args:
+        cod_destino: Código de destino
+        pasta_demandas: Nome da pasta com os arquivos
+        sheet_name: Nome da sheet a ser lida dos arquivos de saturação (None = não processa saturação)
     """
     # Define o caminho completo para a pasta de demandas
     caminho_pasta = os.path.join(caminho_base, pasta_demandas)
@@ -59,9 +64,12 @@ def Processar_Demandas(cod_destino, pasta_demandas="Demandas"):
         caminho_completo_arquivo = os.path.join(caminho_pasta, nome_arquivo)
         nome_arquivo_lower = nome_arquivo.lower()
         
+        print(f"\n--- Analisando arquivo: '{nome_arquivo}' ---")
+        
         try:
             # --- MANTÉM A LÓGICA ORIGINAL PARA ARQUIVOS .TXT E .CSV ---
             if nome_arquivo_lower.endswith((".txt", ".csv")):
+                print(f"Tipo: TXT/CSV")
                 dados_arquivo_atual = []
                 with open(caminho_completo_arquivo, "r", encoding="utf-8", errors="ignore") as arquivo:
                     linhas_a_processar = arquivo.readlines()
@@ -98,7 +106,8 @@ def Processar_Demandas(cod_destino, pasta_demandas="Demandas"):
                     lista_dfs.append(df_temp)
 
             # --- NOVA LÓGICA PARA PROCESSAR ARQUIVOS EXCEL (.XLS, .XLSX) ---
-            elif nome_arquivo_lower.endswith((".xls", ".xlsx")):
+            elif nome_arquivo_lower.endswith((".xls", ".xlsx")) and ("saturação" not in nome_arquivo_lower and "saturacao" not in nome_arquivo_lower):
+                print(f"Tipo: Excel (NÃO saturação)")
                 
                 # Mapeamento dos nomes de coluna do arquivo Excel para os nomes desejados
                 colunas_mapeamento = {
@@ -127,6 +136,92 @@ def Processar_Demandas(cod_destino, pasta_demandas="Demandas"):
 
                 # 3. Adiciona o DataFrame processado à lista para concatenação posterior
                 lista_dfs.append(df_temp)
+                
+            elif nome_arquivo_lower.endswith((".xls", ".xlsx")) and ("saturação" in nome_arquivo_lower or "saturacao" in nome_arquivo_lower):
+                print(f"Tipo: Excel (SATURAÇÃO detectada)")
+                
+                # Só processa arquivos de saturação se sheet_name foi fornecido
+                if sheet_name is None:
+                    print(f"INFO: Arquivo de saturação '{nome_arquivo}' ignorado (sheet_name não fornecido)")
+                    continue
+                
+                # Debug: mostra informações do arquivo Excel
+                try:
+                    xl_file = pd.ExcelFile(caminho_completo_arquivo)
+                    print(f"\n=== Processando arquivo de saturação: '{nome_arquivo}' ===")
+                    print(f"Sheets disponíveis: {xl_file.sheet_names}")
+                    
+                    # Verifica se a sheet existe
+                    if sheet_name not in xl_file.sheet_names:
+                        print(f"ERRO: Sheet '{sheet_name}' não encontrada. Sheets disponíveis: {xl_file.sheet_names}")
+                        continue
+                    
+                    print(f"Lendo sheet: '{sheet_name}'")
+                    
+                except Exception as e:
+                    print(f"Erro ao ler sheets do arquivo '{nome_arquivo}': {e}")
+                    continue
+                
+                # Lê o arquivo Excel de saturação da sheet específica com header na linha 3 (índice 2)
+                df_excel = pd.read_excel(caminho_completo_arquivo, sheet_name=sheet_name, header=2)
+                
+                # Debug: mostra as colunas disponíveis
+                print(f"Colunas encontradas no arquivo (header=3): {list(df_excel.columns)}")
+                print(f"Primeiras linhas do DataFrame:")
+                print(df_excel.head(2))
+                
+                # Mapeamento dos nomes de coluna do arquivo Excel de saturação para os nomes desejados
+                # Usa uma busca flexível para encontrar as colunas corretas
+                colunas_saturacao_mapeamento = {}
+                
+                # Procura pelas colunas necessárias
+                for col in df_excel.columns:
+                    col_upper = str(col).upper().strip()
+                    if 'DESENHO' in col_upper and 'FIAT' in col_upper:
+                        colunas_saturacao_mapeamento[col] = 'DESENHO'
+                    elif 'CÓDIGO' in col_upper and 'IMS' in col_upper:
+                        # IMS será mantido como COD IMS
+                        colunas_saturacao_mapeamento[col] = 'COD IMS'
+                    elif 'QUANTIDADE' in col_upper and 'SOLICITADA' in col_upper:
+                        colunas_saturacao_mapeamento[col] = 'QTDE'
+                
+                # print(f"Mapeamento de colunas criado: {colunas_saturacao_mapeamento}")
+                
+                # Verifica se encontrou as colunas OBRIGATÓRIAS (DESENHO e QTDE)
+                tem_desenho = 'DESENHO' in colunas_saturacao_mapeamento.values()
+                tem_qtde = 'QTDE' in colunas_saturacao_mapeamento.values()
+                
+                if not (tem_desenho and tem_qtde):
+                    print(f"Aviso: O arquivo '{nome_arquivo}' não contém as colunas obrigatórias (DESENHO e QTDE).")
+                    print(f"Esperado: DESENHO e QTDE (mínimo)")
+                    print(f"Encontrado: {list(colunas_saturacao_mapeamento.values())}")
+                    continue
+
+                # 1. Seleciona apenas as colunas que nos interessam
+                colunas_originais_necessarias = list(colunas_saturacao_mapeamento.keys())
+                df_temp = df_excel[colunas_originais_necessarias].copy()
+                
+                # 2. Renomeia as colunas para o padrão final
+                df_temp.rename(columns=colunas_saturacao_mapeamento, inplace=True)
+
+                # 3. Remove .0 do final dos valores de COD IMS (converte para int, depois para string)
+                if 'COD IMS' in df_temp.columns:
+                    df_temp['COD IMS'] = pd.to_numeric(df_temp['COD IMS'], errors='coerce')
+                    df_temp['COD IMS'] = df_temp['COD IMS'].fillna(0).astype(int).astype(str)
+                    df_temp['COD IMS'] = df_temp['COD IMS'].replace('0', pd.NA)  # Restaura NaN onde era 0
+
+                # 4. COD FORNECEDOR sempre nulo para arquivos de saturação (será preenchido depois via COD IMS)
+                df_temp['COD FORNECEDOR'] = pd.NA
+                # print(f"INFO: Coluna 'COD FORNECEDOR' definida como nula (será derivada de COD IMS).")
+
+                # 5. Adiciona a coluna COD DESTINO
+                df_temp["COD DESTINO"] = cod_destino
+
+                # print(f"DataFrame processado com {len(df_temp)} linhas")
+                # print(f"Colunas finais: {list(df_temp.columns)}")
+                
+                # 4. Adiciona o DataFrame processado à lista para concatenação posterior
+                lista_dfs.append(df_temp)
 
         except Exception as e:
             print(f"Erro ao processar o arquivo '{nome_arquivo}': {e}")
@@ -141,18 +236,35 @@ def Processar_Demandas(cod_destino, pasta_demandas="Demandas"):
     # Concatena todos os DataFrames da lista em um único DataFrame final
     df_final = pd.concat(lista_dfs, ignore_index=True)
 
+    # Para arquivos de saturação, COD FORNECEDOR pode estar nulo
+    # Neste caso, usamos COD IMS como COD FORNECEDOR
+    if 'COD IMS' in df_final.columns:
+        # Preenche COD FORNECEDOR com COD IMS onde estiver nulo
+        df_final['COD FORNECEDOR'] = df_final['COD FORNECEDOR'].fillna(df_final['COD IMS'])
+
     # Garante que as colunas numéricas tenham o tipo de dados correto, tratando possíveis erros
     # Esta etapa é importante para garantir a consistência entre os dados de texto e Excel
     colunas_numericas = ["DESENHO", "COD FORNECEDOR", "QTDE"]
     for col in colunas_numericas:
-        df_final[col] = pd.to_numeric(df_final[col], errors='coerce')
+        if col in df_final.columns:
+            df_final[col] = pd.to_numeric(df_final[col], errors='coerce')
 
     # Remove linhas onde a conversão numérica falhou (resultando em NaT/NaN)
-    df_final.dropna(subset=colunas_numericas, inplace=True)
+    # Mas mantém se apenas COD FORNECEDOR estiver nulo (pode vir de COD IMS depois)
+    df_final.dropna(subset=["DESENHO", "QTDE"], inplace=True)
+
+    # Remove linhas onde QTDE é zero ou negativo
+    df_final = df_final[df_final['QTDE'] > 0]
 
     # Converte colunas para inteiro após remover os nulos
     for col in colunas_numericas:
-        df_final[col] = df_final[col].astype(int)
+        if col in df_final.columns:
+            df_final[col] = pd.to_numeric(df_final[col], errors='coerce')
+            # Só converte para int se não tiver NaN
+            if df_final[col].notna().all():
+                df_final[col] = df_final[col].astype(int)
+    
+    print(f"Total de linhas após filtragem (QTDE > 0): {len(df_final)}")
     
     return df_final
 
@@ -457,7 +569,11 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
         template['M³'] = round(template['QTD EMBALAGENS'] * template['MDR'].map(mapa_volume), 1)
         template['PESO MAT'] = round(template['QTDE'] * template['KEY'].map(mapa_peso_pn), 1)
         template['PESO MDR'] = round(template['QTD EMBALAGENS'] * template['MDR'].map(mapa_peso_mdr), 1)
-        template['PESO TOTAL'] = template['PESO MAT'] + template['PESO MDR']
+        
+        # Garante que NaN seja tratado como 0 antes de somar e arredonda o resultado
+        template['PESO MAT'] = template['PESO MAT'].fillna(0)
+        template['PESO MDR'] = template['PESO MDR'].fillna(0)
+        template['PESO TOTAL'] = round(template['PESO MAT'] + template['PESO MDR'], 1)
 
 
         template = template[['COD FORNECEDOR', 'FORNECEDOR', 'COD DESTINO', 'DESENHO', 'QTDE', 'DESCRIÇÃO MATERIAL',
@@ -565,10 +681,16 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
         df_saturacao['VEICULO'] = df_saturacao['VEICULO'].astype(int)         
         df_saturacao['CAPACIDADE_VEIC_ANTERIOR'] = df_saturacao.apply(obter_capacidade_por_linha_veic_anterior, axis=1)
 
+        # Converte para numérico, tratando valores não numéricos
+        df_saturacao['CAPACIDADE'] = pd.to_numeric(df_saturacao['CAPACIDADE'], errors='coerce')
+        df_saturacao['CAPACIDADE_VEIC_ANTERIOR'] = pd.to_numeric(df_saturacao['CAPACIDADE_VEIC_ANTERIOR'], errors='coerce')
+        df_saturacao['CXS/PALLETS_TOTAL'] = pd.to_numeric(df_saturacao['CXS/PALLETS_TOTAL'], errors='coerce')
         
-
-        df_saturacao['SATURAÇÃO COM VEÍCULO MENOR (%)'] = round(
-            df_saturacao['CXS/PALLETS_TOTAL'] / df_saturacao['CAPACIDADE_VEIC_ANTERIOR'] * 100, 2
+        # Calcula saturação apenas onde CAPACIDADE_VEIC_ANTERIOR não é nulo/zero
+        df_saturacao['SATURAÇÃO COM VEÍCULO MENOR (%)'] = 0.0
+        mask = (df_saturacao['CAPACIDADE_VEIC_ANTERIOR'].notna()) & (df_saturacao['CAPACIDADE_VEIC_ANTERIOR'] > 0)
+        df_saturacao.loc[mask, 'SATURAÇÃO COM VEÍCULO MENOR (%)'] = round(
+            df_saturacao.loc[mask, 'CXS/PALLETS_TOTAL'] / df_saturacao.loc[mask, 'CAPACIDADE_VEIC_ANTERIOR'] * 100, 2
         )
 
         bases = set(zip(db_empilhamento['FORNECEDOR'], db_empilhamento['MDR BASE']))

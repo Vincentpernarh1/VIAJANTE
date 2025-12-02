@@ -145,10 +145,11 @@ def normalizar_codigos(campo):
     return re.split(r'\s*/\s*', str(campo).strip())
 
 
-def input_demanda(cod_destinos, use_all_codes=False):
+def input_demanda(cod_destinos, use_all_codes=False, sheet_name=None):
     """
     cod_destinos: list of codes entered by the user, e.g. [1080, 1046]
     use_all_codes: if True, process all COD DESTINO found in demand files
+    sheet_name: optional sheet name to read from demand files (Geral, Sábado, Domingo)
     Returns a DataFrame with all matched rows, saving full COD DESTINO values.
     """
     fluxos = os.path.join(caminho_base, "BD", "FLUXO.xlsx")
@@ -169,7 +170,11 @@ def input_demanda(cod_destinos, use_all_codes=False):
                 
                 try:
                     if nome_arquivo_lower.endswith((".xls", ".xlsx")):
-                        df_temp = pd.read_excel(caminho_completo)
+                        # Only use sheet_name if provided, otherwise use default (first sheet)
+                        if sheet_name:
+                            df_temp = pd.read_excel(caminho_completo, sheet_name=sheet_name)
+                        else:
+                            df_temp = pd.read_excel(caminho_completo)
                         if 'COD DESTINO' in df_temp.columns:
                             unique_cod_destinos.update(df_temp['COD DESTINO'].dropna().astype(str).unique())
                 except Exception as e:
@@ -186,32 +191,49 @@ def input_demanda(cod_destinos, use_all_codes=False):
         cod_destinos = [str(c).strip() for c in cod_destinos]
 
     for cod_dest in cod_destinos:
-        df = Processar_Demandas(cod_dest)
+        # Pass sheet_name to Processar_Demandas for saturação file processing
+        df = Processar_Demandas(cod_dest, sheet_name=sheet_name)
         
         for _, row in df.iterrows():
-            cod_forn = str(row["COD FORNECEDOR"]).strip()
+            cod_forn = str(row["COD FORNECEDOR"]).strip() if pd.notna(row.get("COD FORNECEDOR")) else None
+            cod_ims_from_file = str(row.get("COD IMS", "")).strip() if pd.notna(row.get("COD IMS")) else None
+            
             codigo = None
             tipo = None
             cod_ims = None
             cod_dest_full = cod_dest  # default
+            matched_cod_forn = cod_forn  # usar o original se não encontrar match
 
             for _, linha_fluxo in db_fluxos.iterrows():
                 cods_sap = normalizar_codigos(linha_fluxo["COD FORNECEDOR"])
                 cods_dest_raw = str(linha_fluxo["COD DESTINO"]).strip()
                 cods_dest_split = re.split(r'\s*/\s*', cods_dest_raw)
+                
+                # Pega o COD IMS do fluxo (pode estar na coluna COD IMS)
+                fluxo_cod_ims = str(linha_fluxo.get("COD IMS", "")).strip() if pd.notna(linha_fluxo.get("COD IMS")) else None
 
-                if cod_forn in cods_sap and cod_dest in cods_dest_split:
+                # Match por COD FORNECEDOR ou por COD IMS
+                match_fornecedor = cod_forn and cod_forn in cods_sap
+                match_ims = cod_ims_from_file and fluxo_cod_ims and cod_ims_from_file == fluxo_cod_ims
+                
+                if (match_fornecedor or match_ims) and cod_dest in cods_dest_split:
                     nome_veiculo = linha_fluxo["VEICULO PRINCIPAL"]
                     codigo = get_vehicle_code(nome_veiculo)
                     tipo = linha_fluxo.get("TIPO SATURACAO", None)
                     cod_ims = linha_fluxo.get("COD IMS", None)
                     cod_dest_full = cods_dest_raw
+                    
+                    # Se foi match por IMS, pega o COD FORNECEDOR do fluxo
+                    if match_ims and not cod_forn:
+                        # Pega o primeiro COD FORNECEDOR da lista
+                        matched_cod_forn = cods_sap[0] if cods_sap else cod_ims_from_file
+                    
                     break
 
             # append full row data
             all_rows.append({
-                "COD FORNECEDOR": cod_forn,
-                "COD IMS": cod_ims,
+                "COD FORNECEDOR": matched_cod_forn,
+                "COD IMS": cod_ims or cod_ims_from_file,
                 "COD DESTINO": cod_dest_full,
                 "DESENHO": row["DESENHO"],
                 "QTDE": row["QTDE"],
@@ -373,13 +395,36 @@ btn_atualizar = ttk.Button(frame_cod_destino, text="Atualizar Dados",
                            command=lambda: atualizar(), style="Highlight.TButton")
 btn_atualizar.pack(side=LEFT, padx=5)
 
+# Flechinha dropdown for sheet selection
+Label(frame_cod_destino, text="Flechinha:", font=("Arial", 10, "bold"), bg="#002855", fg="#FFCC00").pack(side=LEFT, padx=(30, 5))
+flechinha_var = StringVar(value='')
+
+# Configure style for Flechinha combobox with yellow background
+style.configure('Flechinha.TCombobox', fieldbackground='#FFCC00', background='#FFCC00', foreground='#002855')
+style.map('Flechinha.TCombobox', 
+          fieldbackground=[('readonly', '#FFCC00')],
+          selectbackground=[('readonly', '#FFCC00')],
+          selectforeground=[('readonly', '#002855')],
+          foreground=[('readonly', '#002855')])
+
+flechinha_combo = ttk.Combobox(frame_cod_destino, textvariable=flechinha_var, width=12, state='readonly', 
+                                font=("Arial", 9), style='Flechinha.TCombobox')
+flechinha_combo['values'] = ['', 'Geral', 'Sábado', 'Domingo']
+flechinha_combo.pack(side=LEFT, padx=5)
+
+# Configure the dropdown list colors
+janela.option_add('*TCombobox*Listbox.background', '#FFCC00')
+janela.option_add('*TCombobox*Listbox.foreground', '#002855')
+janela.option_add('*TCombobox*Listbox.selectBackground', '#FFD633')
+janela.option_add('*TCombobox*Listbox.selectForeground', '#002855')
+
 frame_caminhoes = Frame(frame_top,  bg="#002855")
 frame_caminhoes.grid(row=0, column=0, sticky='ne', padx=(480, 0))
 canvas_caminhoes = Canvas(frame_caminhoes, width=450, height=250,  bg="#002855", highlightthickness=0)
 canvas_caminhoes.pack()
 
 frame_resumo = Frame(frame_top, bg="#002855")
-frame_resumo.grid(row=0, column=1, sticky='ne', padx=20)
+frame_resumo.grid(row=0, column=1, sticky='nw', padx=(0, 10))
 
 tree_resumo = ttk.Treeview(frame_resumo, columns=("Info", "Valor"), show="headings", height=6)
 tree_resumo.heading("Info", text="Info")
@@ -448,7 +493,9 @@ def atualizar():
                 cod_destino_values = [c.strip() for c in cod_destino_var.get().split(',') if c.strip()]
                 # Use all COD DESTINO if checkbox is checked
                 use_all = use_all_cod_destino.get()
-                df_final = input_demanda(cod_destino_values, use_all_codes=use_all)  # all codes processed together
+                # Get selected sheet name from Flechinha dropdown (only if not empty)
+                selected_sheet = flechinha_var.get() if flechinha_var.get() else None
+                df_final = input_demanda(cod_destino_values, use_all_codes=use_all, sheet_name=selected_sheet)  # all codes processed together
 
                 completar_informacoes(
                     tree, int(cod), tree_resumo, canvas_caminhoes, caminhao_img, usar_manual=modo_manual.get()
@@ -518,8 +565,14 @@ def start_loading():
   
 def finalizar_status(msg, color):
     """Atualiza o texto e esconde após 2 segundos"""
+    # Check if Flechinha was selected
+    flechinha_selected = flechinha_var.get() != ''
+    
     if "sucesso" in msg.lower():
-        loading_label.config(text=msg, fg="#FFCC00", bg="#002855", relief="solid", borderwidth=2)
+        if flechinha_selected:
+            loading_label.config(text=msg, fg="#002855", bg="#FFCC00", relief="solid", borderwidth=2)
+        else:
+            loading_label.config(text=msg, fg="#FFCC00", bg="#2e8b57", relief="solid", borderwidth=2)
     else:
         loading_label.config(text=msg, fg="#FFCC00", bg="#002855", relief="solid", borderwidth=2)
     janela.after(2000, loading_label.place_forget)
