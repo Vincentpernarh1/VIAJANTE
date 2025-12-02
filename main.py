@@ -1,9 +1,10 @@
 from tkinter import *
 from tkinter import ttk
 from tkinter import Canvas
+from tkinter import messagebox
 from PIL import Image, ImageTk
 # Assuming DB.py contains the functions as used in your original code
-from DB import completar_informacoes, consolidar_dados, Processar_Demandas
+from DB import completar_informacoes, consolidar_dados, Processar_Demandas, limpar_erros, obter_erros
 import pandas as pd
 import re
 import os
@@ -48,12 +49,6 @@ filter_widgets = {}
 
 # ------------------- carregar veículos dinâmicos -------------------
 def load_veiculos(caminho_base):
-    """
-    Tries to load VEÍCULOS.xlsx (or VEICULOS.xlsx) from caminho_base/BD and returns a dict:
-    {descricao_stripped: codigo_int_or_str}
-    If the file or expected columns are not found, returns None.
-    Only returns the display mapping (original descriptions -> code).
-    """
     possible_files = [
         os.path.join(caminho_base, "BD", "VEÍCULOS.xlsx"),
         os.path.join(caminho_base, "BD", "VEICULOS.xlsx"),
@@ -97,7 +92,6 @@ def load_veiculos(caminho_base):
                         if desc not in veic_map:
                             veic_map[desc] = code
                 if veic_map:
-                    print(f"[INFO] Loaded {len(veic_map)} vehicles from {fpath}")
                     return veic_map
             except Exception as e:
                 print(f"[WARN] Could not read vehicles file {fpath}: {e}")
@@ -489,6 +483,9 @@ def atualizar():
             label_veiculo.config(text=f"Código selecionado: {cod}")
 
             if cod:
+                # Limpa erros anteriores antes de processar
+                limpar_erros()
+                
                 # split input codes by comma
                 cod_destino_values = [c.strip() for c in cod_destino_var.get().split(',') if c.strip()]
                 # Use all COD DESTINO if checkbox is checked
@@ -531,6 +528,25 @@ def atualizar():
                     combo.set('')
 
                 consolidar_dados()
+                
+                # Mostra erros/avisos se houver
+                erros = obter_erros()
+                if erros:
+                    # Separa erros e avisos
+                    erros_criticos = [e for e in erros if '[ERRO]' in e]
+                    avisos = [e for e in erros if '[AVISO]' in e]
+                    
+                    mensagem = ""
+                    if erros_criticos:
+                        mensagem += "ERROS ENCONTRADOS:\n" + "\n".join(erros_criticos) + "\n\n"
+                    if avisos:
+                        mensagem += "AVISOS:\n" + "\n".join(avisos)
+                    
+                    # Mostra popup com os erros
+                    if erros_criticos:
+                        messagebox.showwarning("Atenção - Problemas Detectados", mensagem)
+                    else:
+                        messagebox.showinfo("Avisos de Processamento", mensagem)
 
             # --- Stop spinner and show success ---
             loading_label.spinning = False

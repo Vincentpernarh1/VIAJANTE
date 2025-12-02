@@ -36,24 +36,33 @@ warnings.filterwarnings(
 
 
 caminho_base = os.getcwd()
+
+# Lista global para coletar erros e avisos para mostrar ao usuário
+erros_processamento = []
+
+def adicionar_erro(mensagem, tipo="ERRO"):
+    """Adiciona uma mensagem de erro ou aviso à lista global"""
+    erros_processamento.append(f"[{tipo}] {mensagem}")
+    print(f"[{tipo}] {mensagem}")
+
+def limpar_erros():
+    """Limpa a lista de erros"""
+    global erros_processamento
+    erros_processamento = []
+
+def obter_erros():
+    """Retorna a lista de erros acumulados"""
+    return erros_processamento.copy()
     
 
 def Processar_Demandas(cod_destino, pasta_demandas="Demandas", sheet_name=None):
-    """
-    Processa arquivos de demanda de uma pasta, tratando arquivos de texto/CSV
-    e Excel de forma diferente, e os consolida em um único DataFrame.
-    
-    Args:
-        cod_destino: Código de destino
-        pasta_demandas: Nome da pasta com os arquivos
-        sheet_name: Nome da sheet a ser lida dos arquivos de saturação (None = não processa saturação)
-    """
+   
     # Define o caminho completo para a pasta de demandas
     caminho_pasta = os.path.join(caminho_base, pasta_demandas)
 
     # Verifica se a pasta de demandas existe
     if not os.path.isdir(caminho_pasta):
-        print(f"Aviso: A pasta '{caminho_pasta}' não foi encontrada.")
+        adicionar_erro(f"Pasta de demandas não encontrada: '{caminho_pasta}'", "ERRO")
         return pd.DataFrame()
 
     # Lista para armazenar os DataFrames de cada arquivo processado
@@ -63,8 +72,6 @@ def Processar_Demandas(cod_destino, pasta_demandas="Demandas", sheet_name=None):
     for nome_arquivo in os.listdir(caminho_pasta):
         caminho_completo_arquivo = os.path.join(caminho_pasta, nome_arquivo)
         nome_arquivo_lower = nome_arquivo.lower()
-        
-        print(f"\n--- Analisando arquivo: '{nome_arquivo}' ---")
         
         try:
             # --- MANTÉM A LÓGICA ORIGINAL PARA ARQUIVOS .TXT E .CSV ---
@@ -107,8 +114,7 @@ def Processar_Demandas(cod_destino, pasta_demandas="Demandas", sheet_name=None):
 
             # --- NOVA LÓGICA PARA PROCESSAR ARQUIVOS EXCEL (.XLS, .XLSX) ---
             elif nome_arquivo_lower.endswith((".xls", ".xlsx")) and ("saturação" not in nome_arquivo_lower and "saturacao" not in nome_arquivo_lower):
-                print(f"Tipo: Excel (NÃO saturação)")
-                
+                               
                 # Mapeamento dos nomes de coluna do arquivo Excel para os nomes desejados
                 colunas_mapeamento = {
                     'DESENHO': 'DESENHO',
@@ -125,7 +131,8 @@ def Processar_Demandas(cod_destino, pasta_demandas="Demandas", sheet_name=None):
 
                 # Verifica se todas as colunas necessárias existem no arquivo
                 if not all(coluna in df_excel.columns for coluna in colunas_originais_necessarias):
-                    print(f"Aviso: O arquivo '{nome_arquivo}' não contém todas as colunas necessárias e será ignorado.")
+                    faltando = [c for c in colunas_originais_necessarias if c not in df_excel.columns]
+                    adicionar_erro(f"Arquivo '{nome_arquivo}': Colunas faltando: {', '.join(faltando)}", "AVISO")
                     continue
 
                 # 1. Seleciona apenas as colunas que nos interessam
@@ -138,8 +145,7 @@ def Processar_Demandas(cod_destino, pasta_demandas="Demandas", sheet_name=None):
                 lista_dfs.append(df_temp)
                 
             elif nome_arquivo_lower.endswith((".xls", ".xlsx")) and ("saturação" in nome_arquivo_lower or "saturacao" in nome_arquivo_lower):
-                print(f"Tipo: Excel (SATURAÇÃO detectada)")
-                
+                                
                 # Só processa arquivos de saturação se sheet_name foi fornecido
                 if sheet_name is None:
                     print(f"INFO: Arquivo de saturação '{nome_arquivo}' ignorado (sheet_name não fornecido)")
@@ -148,15 +154,12 @@ def Processar_Demandas(cod_destino, pasta_demandas="Demandas", sheet_name=None):
                 # Debug: mostra informações do arquivo Excel
                 try:
                     xl_file = pd.ExcelFile(caminho_completo_arquivo)
-                    print(f"\n=== Processando arquivo de saturação: '{nome_arquivo}' ===")
-                    print(f"Sheets disponíveis: {xl_file.sheet_names}")
-                    
+                                 
                     # Verifica se a sheet existe
                     if sheet_name not in xl_file.sheet_names:
-                        print(f"ERRO: Sheet '{sheet_name}' não encontrada. Sheets disponíveis: {xl_file.sheet_names}")
+                        adicionar_erro(f"Arquivo '{nome_arquivo}': Sheet '{sheet_name}' não encontrada. Disponíveis: {', '.join(xl_file.sheet_names)}", "ERRO")
                         continue
                     
-                    print(f"Lendo sheet: '{sheet_name}'")
                     
                 except Exception as e:
                     print(f"Erro ao ler sheets do arquivo '{nome_arquivo}': {e}")
@@ -165,13 +168,6 @@ def Processar_Demandas(cod_destino, pasta_demandas="Demandas", sheet_name=None):
                 # Lê o arquivo Excel de saturação da sheet específica com header na linha 3 (índice 2)
                 df_excel = pd.read_excel(caminho_completo_arquivo, sheet_name=sheet_name, header=2)
                 
-                # Debug: mostra as colunas disponíveis
-                print(f"Colunas encontradas no arquivo (header=3): {list(df_excel.columns)}")
-                print(f"Primeiras linhas do DataFrame:")
-                print(df_excel.head(2))
-                
-                # Mapeamento dos nomes de coluna do arquivo Excel de saturação para os nomes desejados
-                # Usa uma busca flexível para encontrar as colunas corretas
                 colunas_saturacao_mapeamento = {}
                 
                 # Procura pelas colunas necessárias
@@ -192,9 +188,10 @@ def Processar_Demandas(cod_destino, pasta_demandas="Demandas", sheet_name=None):
                 tem_qtde = 'QTDE' in colunas_saturacao_mapeamento.values()
                 
                 if not (tem_desenho and tem_qtde):
-                    print(f"Aviso: O arquivo '{nome_arquivo}' não contém as colunas obrigatórias (DESENHO e QTDE).")
-                    print(f"Esperado: DESENHO e QTDE (mínimo)")
-                    print(f"Encontrado: {list(colunas_saturacao_mapeamento.values())}")
+                    faltando = []
+                    if not tem_desenho: faltando.append('DESENHO FIAT')
+                    if not tem_qtde: faltando.append('QUANTIDADE SOLICITADA')
+                    adicionar_erro(f"Arquivo saturação '{nome_arquivo}': Colunas obrigatórias faltando: {', '.join(faltando)}", "ERRO")
                     continue
 
                 # 1. Seleciona apenas as colunas que nos interessam
@@ -208,7 +205,7 @@ def Processar_Demandas(cod_destino, pasta_demandas="Demandas", sheet_name=None):
                 if 'COD IMS' in df_temp.columns:
                     df_temp['COD IMS'] = pd.to_numeric(df_temp['COD IMS'], errors='coerce')
                     df_temp['COD IMS'] = df_temp['COD IMS'].fillna(0).astype(int).astype(str)
-                    df_temp['COD IMS'] = df_temp['COD IMS'].replace('0', pd.NA)  # Restaura NaN onde era 0
+                    # df_temp['COD IMS'] = df_temp['COD IMS'].replace('0', pd.NA)  # Restaura NaN onde era 0
 
                 # 4. COD FORNECEDOR sempre nulo para arquivos de saturação (será preenchido depois via COD IMS)
                 df_temp['COD FORNECEDOR'] = pd.NA
@@ -224,13 +221,13 @@ def Processar_Demandas(cod_destino, pasta_demandas="Demandas", sheet_name=None):
                 lista_dfs.append(df_temp)
 
         except Exception as e:
-            print(f"Erro ao processar o arquivo '{nome_arquivo}': {e}")
+            adicionar_erro(f"Erro ao processar arquivo '{nome_arquivo}': {str(e)}", "ERRO")
             continue
 
     # --- LÓGICA FINAL PARA CONSOLIDAR OS DADOS ---
     # Se a lista de DataFrames estiver vazia, retorna um DataFrame vazio
     if not lista_dfs:
-        print("Nenhum dado válido foi processado.")
+        adicionar_erro("Nenhum dado válido foi processado. Verifique os arquivos na pasta Demandas.", "ERRO")
         return pd.DataFrame()
     
     # Concatena todos os DataFrames da lista em um único DataFrame final
@@ -264,7 +261,6 @@ def Processar_Demandas(cod_destino, pasta_demandas="Demandas", sheet_name=None):
             if df_final[col].notna().all():
                 df_final[col] = df_final[col].astype(int)
     
-    print(f"Total de linhas após filtragem (QTDE > 0): {len(df_final)}")
     
     return df_final
 
@@ -848,11 +844,14 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
                     pn_nao_cadastrados = pn_nao_cadastrados[existing_cols]
                     pn_nao_cadastrados.drop_duplicates(subset=["DESENHO"], inplace=True)
                     pn_nao_cadastrados.to_excel(writer, sheet_name='PN Não Cadastrados', index=False)
+                    
+                    # Log de PNs não cadastrados
+                    qtd_pn_faltando = len(pn_nao_cadastrados)
+                    adicionar_erro(f"{qtd_pn_faltando} desenho(s) sem MDR cadastrado. Verifique a aba 'PN Não Cadastrados'.", "AVISO")
 
     except Exception as e:
-
+        adicionar_erro(f"Erro crítico ao processar informações: {str(e)}", "ERRO")
         print(f"Erro: {e}")
-
         traceback.print_exc()
 
 
@@ -863,31 +862,52 @@ def consolidar_dados():
     template = pd.read_excel('VIAJANTE.xlsx', sheet_name='Template Completo')
 
     # Filtra linhas com quantidade válida e prepara as colunas
-    template = template[template['QTDE'] > 0].copy() # Use .copy() to avoid SettingWithCopyWarning
-    template['COD FORNECEDOR'] = template['COD FORNECEDOR'].astype(str)
+    template = template[template['QTDE'] > 0].copy()
+    template['COD FORNECEDOR'] = template['COD FORNECEDOR'].astype(str).str.strip()
+    template['COD DESTINO'] = template['COD DESTINO'].astype(str).str.strip()
+    
+    # Normalize FLUXO data types
+    fluxos['COD FORNECEDOR'] = fluxos['COD FORNECEDOR'].astype(str).str.strip()
+    fluxos['COD DESTINO'] = fluxos['COD DESTINO'].astype(str).str.strip()
+    
+    # Handle COD IMS if present
+    if 'COD IMS' in template.columns:
+        template['COD IMS'] = template['COD IMS'].astype(str).str.strip()
+    if 'COD IMS' in fluxos.columns:
+        fluxos['COD IMS'] = fluxos['COD IMS'].astype(str).str.strip()
 
-
-    # --- FIX: Ensure the supplier name column is also a string ---
     template['FORNECEDOR'] = template['FORNECEDOR'].fillna('').astype(str)
-
 
     def normalizar_codigos(campo):
         if pd.isna(campo):
             return []
-        return re.split(r'\s*/\s*', str(campo).strip())
+        return [c.strip() for c in re.split(r'\s*/\s*', str(campo).strip()) if c.strip()]
 
     dados_volume = []
 
-    for cod_dest in template['COD DESTINO'].dropna().unique():
-        subset_template = template[template['COD DESTINO'] == cod_dest]
+    # Collect all individual destination codes from template
+    all_cod_destinos = set()
+    for cod_dest_raw in template['COD DESTINO'].dropna().unique():
+        individual_codes = normalizar_codigos(cod_dest_raw)
+        all_cod_destinos.update(individual_codes)
+    
+    for cod_dest in all_cod_destinos:
+        # Find all rows in template that contain this destination code
+        mask_template = template['COD DESTINO'].apply(lambda x: cod_dest in normalizar_codigos(x))
+        subset_template = template[mask_template]
 
+        # Build set of supplier codes - use COD IMS first, then COD FORNECEDOR
         fornecedores_template_set = set()
-        for cod in subset_template['COD FORNECEDOR'].astype(str):
-            fornecedores_template_set.update(normalizar_codigos(cod))
+        for _, row in subset_template.iterrows():
+            # If COD IMS exists and is not empty/nan, use it; otherwise use COD FORNECEDOR
+            if 'COD IMS' in template.columns and pd.notna(row.get('COD IMS')) and str(row.get('COD IMS')).strip() not in ['', 'nan', 'None']:
+                fornecedores_template_set.update(normalizar_codigos(row['COD IMS']))
+            else:
+                fornecedores_template_set.update(normalizar_codigos(row['COD FORNECEDOR']))
 
-        rotas_destino = fluxos[fluxos['COD DESTINO'].astype(str).str.contains(str(cod_dest))]
-
-       
+        # Find routes that include this destination code
+        mask_fluxo = fluxos['COD DESTINO'].apply(lambda x: cod_dest in normalizar_codigos(x))
+        rotas_destino = fluxos[mask_fluxo]
         
         for _, rota in rotas_destino.iterrows():
             cod_fluxo = rota['COD FLUXO']
@@ -895,12 +915,27 @@ def consolidar_dados():
             veiculo = rota['VEICULO PRINCIPAL']
             tipo_saturacao = rota['TIPO SATURACAO']
             transportadora = rota['TRANSPORTADORA']
-            fornecedores_rota = normalizar_codigos(rota['COD FORNECEDOR'])
+            
+            # Get supplier codes from route - check both COD IMS and COD FORNECEDOR
+            fornecedores_rota = set()
+            if 'COD IMS' in fluxos.columns and pd.notna(rota.get('COD IMS')):
+                fornecedores_rota.update(normalizar_codigos(rota['COD IMS']))
+            fornecedores_rota.update(normalizar_codigos(rota['COD FORNECEDOR']))
 
+            # Find common suppliers between template and route
             fornecedores_comuns = [f for f in fornecedores_rota if f in fornecedores_template_set]
 
             if fornecedores_comuns:
-                linhas_rota = subset_template[subset_template['COD FORNECEDOR'].astype(str).isin(fornecedores_comuns)]
+                # Find template rows that match - check both COD IMS and COD FORNECEDOR
+                def row_matches_suppliers(row):
+                    row_codes = set()
+                    if 'COD IMS' in template.columns and pd.notna(row.get('COD IMS')) and str(row.get('COD IMS')).strip() not in ['', 'nan', 'None']:
+                        row_codes.update(normalizar_codigos(row['COD IMS']))
+                    row_codes.update(normalizar_codigos(row['COD FORNECEDOR']))
+                    return any(f in row_codes for f in fornecedores_comuns)
+                
+                mask_fornecedor = subset_template.apply(row_matches_suppliers, axis=1)
+                linhas_rota = subset_template[mask_fornecedor]
 
                 volume_total = linhas_rota['M³'].sum()
                 peso_total = linhas_rota['PESO TOTAL'].sum()
@@ -914,15 +949,16 @@ def consolidar_dados():
                 nomes_fornecedores = linhas_rota[['COD FORNECEDOR', 'FORNECEDOR']].drop_duplicates()
                 nomes_fornecedores['COD FORNECEDOR'] = nomes_fornecedores['COD FORNECEDOR'].astype(str)
 
-                nomes_ordenados = nomes_fornecedores.set_index('COD FORNECEDOR').loc[fornecedores_comuns]['FORNECEDOR'].tolist()
-
-
-              
-
+                # Get supplier names in order
+                nomes_ordenados = []
+                for f in fornecedores_comuns:
+                    matching = nomes_fornecedores[nomes_fornecedores['COD FORNECEDOR'].apply(lambda x: f in normalizar_codigos(x))]
+                    if not matching.empty:
+                        nomes_ordenados.append(matching.iloc[0]['FORNECEDOR'])
 
                 cargas = ceil(saturacao_total / 100) if saturacao_total > 0 else 0
 
-                # --- Coluna de Sugestão ---
+                # Coluna de Sugestão
                 saturacao_residual = saturacao_total % 100
                 if cargas > 0 and saturacao_residual <= 2:
                     sugestao = "Cortar coleta do último veículo"
@@ -931,16 +967,11 @@ def consolidar_dados():
                 else:
                     sugestao = "Manter coleta"
 
-                # --- Apuração de MDR ---
+                # Apuração de MDR
                 coluna_sat = 'SAT VOLUME (%)' if tipo_saturacao.upper() == 'VOLUME' else 'SAT PESO (%)'
                 
-                linhas_template_todas = subset_template[
-                    subset_template['COD FORNECEDOR'].astype(str).isin(fornecedores_comuns)]
-
-                total_desenhos = linhas_template_todas['DESENHO'].nunique()
-                desenhos_apurados = linhas_template_todas[
-                    linhas_template_todas[coluna_sat].fillna(0) > 0
-                    ]['DESENHO'].nunique()
+                total_desenhos = linhas_rota['DESENHO'].nunique()
+                desenhos_apurados = linhas_rota[linhas_rota[coluna_sat].fillna(0) > 0]['DESENHO'].nunique()
 
                 perc_mdr = round((desenhos_apurados / total_desenhos) * 100, 1) if total_desenhos else 0.0
 
