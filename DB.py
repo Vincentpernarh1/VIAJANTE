@@ -76,7 +76,6 @@ def Processar_Demandas(cod_destino, pasta_demandas="Demandas", sheet_name=None):
         try:
             # --- MANTÉM A LÓGICA ORIGINAL PARA ARQUIVOS .TXT E .CSV ---
             if nome_arquivo_lower.endswith((".txt", ".csv")):
-                print(f"Tipo: TXT/CSV")
                 dados_arquivo_atual = []
                 with open(caminho_completo_arquivo, "r", encoding="utf-8", errors="ignore") as arquivo:
                     linhas_a_processar = arquivo.readlines()
@@ -847,7 +846,7 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
                     
                     # Log de PNs não cadastrados
                     qtd_pn_faltando = len(pn_nao_cadastrados)
-                    adicionar_erro(f"{qtd_pn_faltando} desenho(s) sem MDR cadastrado. Verifique a aba 'PN Não Cadastrados'.", "AVISO")
+                    adicionar_erro(f"{qtd_pn_faltando} desenho(s) sem MDR cadastrado. Verifique a aba 'PN Não Cadastrados'. do viajante", "AVISO")
 
     except Exception as e:
         adicionar_erro(f"Erro crítico ao processar informações: {str(e)}", "ERRO")
@@ -881,19 +880,16 @@ def consolidar_dados():
     def normalizar_codigos(campo):
         if pd.isna(campo):
             return []
-        return [c.strip() for c in re.split(r'\s*/\s*', str(campo).strip()) if c.strip()]
+        return [c.strip() for c in re.split(r'\s*,\s*', str(campo).strip()) if c.strip()]
 
     dados_volume = []
 
-    # Collect all individual destination codes from template
-    all_cod_destinos = set()
-    for cod_dest_raw in template['COD DESTINO'].dropna().unique():
-        individual_codes = normalizar_codigos(cod_dest_raw)
-        all_cod_destinos.update(individual_codes)
+    # Collect all unique destination codes from template as exact strings
+    all_cod_destinos = set(template['COD DESTINO'].dropna().unique())
     
     for cod_dest in all_cod_destinos:
-        # Find all rows in template that contain this destination code
-        mask_template = template['COD DESTINO'].apply(lambda x: cod_dest in normalizar_codigos(x))
+        # Find all rows in template that match this exact destination code
+        mask_template = template['COD DESTINO'] == cod_dest
         subset_template = template[mask_template]
 
         # Build set of supplier codes - use COD IMS first, then COD FORNECEDOR
@@ -905,8 +901,8 @@ def consolidar_dados():
             else:
                 fornecedores_template_set.update(normalizar_codigos(row['COD FORNECEDOR']))
 
-        # Find routes that include this destination code
-        mask_fluxo = fluxos['COD DESTINO'].apply(lambda x: cod_dest in normalizar_codigos(x))
+        # Find routes that match this exact destination code
+        mask_fluxo = fluxos['COD DESTINO'] == cod_dest
         rotas_destino = fluxos[mask_fluxo]
         
         for _, rota in rotas_destino.iterrows():
@@ -975,25 +971,26 @@ def consolidar_dados():
 
                 perc_mdr = round((desenhos_apurados / total_desenhos) * 100, 1) if total_desenhos else 0.0
 
-                dados_volume.append({
-                    'COD FLUXO': cod_fluxo,
-                    'COD DESTINO': cod_dest,
-                    'DESTINO': destino,
-                    'CÓDIGOS FORNECEDORES': ', '.join(fornecedores_comuns),
-                    'FORNECEDORES NA ROTA': ', '.join(nomes_ordenados),
-                    'VEÍCULO': veiculo,
-                    'TECNOLOGIA': rota['TECNOLOGIA'],
-                    'MOT': rota['MOT'],
-                    'TRANSPORTADORA': transportadora,
-                    'TIPO DE SATURAÇÃO': tipo_saturacao,
-                    'VOLUME TOTAL (m³)': round(volume_total, 1),
-                    'PESO TOTAL (kg)': round(peso_total, 1),
-                    'EMBALAGENS TOTAL': int(embalagens_total),
-                    'SATURAÇÃO TOTAL (%)': round(saturacao_total, 2),
-                    'CARGAS': cargas,
-                    'SUGESTÃO': sugestao,
-                    '% MDRs APURADOS': perc_mdr
-                })
+                if perc_mdr != 0:
+                    dados_volume.append({
+                        'COD FLUXO': cod_fluxo,
+                        'COD DESTINO': cod_dest,
+                        'DESTINO': destino,
+                        'CÓDIGOS FORNECEDORES': ', '.join(fornecedores_comuns),
+                        'FORNECEDORES NA ROTA': ', '.join(nomes_ordenados),
+                        'VEÍCULO': veiculo,
+                        'TECNOLOGIA': rota['TECNOLOGIA'],
+                        'MOT': rota['MOT'],
+                        'TRANSPORTADORA': transportadora,
+                        'TIPO DE SATURAÇÃO': tipo_saturacao,
+                        'VOLUME TOTAL (m³)': round(volume_total, 1),
+                        'PESO TOTAL (kg)': round(peso_total, 1),
+                        'EMBALAGENS TOTAL': int(embalagens_total),
+                        'SATURAÇÃO TOTAL (%)': round(saturacao_total, 2),
+                        'CARGAS': cargas,
+                        'SUGESTÃO': sugestao,
+                        '% MDRs APURADOS': perc_mdr
+                    })
 
     df_volume = pd.DataFrame(dados_volume)
     df_volume.to_excel('Volume_por_rota.xlsx', index=False)

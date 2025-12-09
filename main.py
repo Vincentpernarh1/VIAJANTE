@@ -136,7 +136,7 @@ def get_vehicle_code(nome_veiculo):
 def normalizar_codigos(campo):
     if pd.isna(campo):
         return []
-    return re.split(r'\s*/\s*', str(campo).strip())
+    return [c.strip() for c in re.split(r'\s*,\s*', str(campo).strip()) if c.strip()]
 
 
 def input_demanda(cod_destinos, use_all_codes=False, sheet_name=None):
@@ -201,7 +201,6 @@ def input_demanda(cod_destinos, use_all_codes=False, sheet_name=None):
             for _, linha_fluxo in db_fluxos.iterrows():
                 cods_sap = normalizar_codigos(linha_fluxo["COD FORNECEDOR"])
                 cods_dest_raw = str(linha_fluxo["COD DESTINO"]).strip()
-                cods_dest_split = re.split(r'\s*/\s*', cods_dest_raw)
                 
                 # Pega o COD IMS do fluxo (pode estar na coluna COD IMS)
                 fluxo_cod_ims = str(linha_fluxo.get("COD IMS", "")).strip() if pd.notna(linha_fluxo.get("COD IMS")) else None
@@ -210,7 +209,7 @@ def input_demanda(cod_destinos, use_all_codes=False, sheet_name=None):
                 match_fornecedor = cod_forn and cod_forn in cods_sap
                 match_ims = cod_ims_from_file and fluxo_cod_ims and cod_ims_from_file == fluxo_cod_ims
                 
-                if (match_fornecedor or match_ims) and cod_dest in cods_dest_split:
+                if (match_fornecedor or match_ims) and cod_dest == cods_dest_raw:
                     nome_veiculo = linha_fluxo["VEICULO PRINCIPAL"]
                     codigo = get_vehicle_code(nome_veiculo)
                     tipo = linha_fluxo.get("TIPO SATURACAO", None)
