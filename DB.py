@@ -108,7 +108,8 @@ def Processar_Demandas(cod_destino, pasta_demandas="Demandas", sheet_name=None):
                 # Se dados foram extraídos do arquivo, cria um DataFrame
                 if dados_arquivo_atual:
                     df_temp = pd.DataFrame(dados_arquivo_atual)
-                    df_temp["COD DESTINO"] = cod_destino
+                    if cod_destino is not None:
+                        df_temp["COD DESTINO"] = cod_destino
                     lista_dfs.append(df_temp)
 
             # --- NOVA LÓGICA PARA PROCESSAR ARQUIVOS EXCEL (.XLS, .XLSX) ---
@@ -140,7 +141,11 @@ def Processar_Demandas(cod_destino, pasta_demandas="Demandas", sheet_name=None):
                 # 2. Renomeia as colunas para o padrão final
                 df_temp.rename(columns=colunas_mapeamento, inplace=True)
 
-                # 3. Adiciona o DataFrame processado à lista para concatenação posterior
+                # 3. Filtra por COD DESTINO se fornecido
+                if cod_destino is not None:
+                    df_temp = df_temp[df_temp['COD DESTINO'].astype(str) == str(cod_destino)]
+
+                # 4. Adiciona o DataFrame processado à lista para concatenação posterior
                 lista_dfs.append(df_temp)
                 
             elif nome_arquivo_lower.endswith((".xls", ".xlsx")) and ("saturação" in nome_arquivo_lower or "saturacao" in nome_arquivo_lower):
@@ -211,7 +216,8 @@ def Processar_Demandas(cod_destino, pasta_demandas="Demandas", sheet_name=None):
                 # print(f"INFO: Coluna 'COD FORNECEDOR' definida como nula (será derivada de COD IMS).")
 
                 # 5. Adiciona a coluna COD DESTINO
-                df_temp["COD DESTINO"] = cod_destino
+                if cod_destino is not None:
+                    df_temp["COD DESTINO"] = cod_destino
 
                 # print(f"DataFrame processado com {len(df_temp)} linhas")
                 # print(f"Colunas finais: {list(df_temp.columns)}")

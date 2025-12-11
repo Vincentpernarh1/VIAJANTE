@@ -4,7 +4,7 @@ from tkinter import Canvas
 from tkinter import messagebox
 from PIL import Image, ImageTk
 # Assuming DB.py contains the functions as used in your original code
-from DB import completar_informacoes, consolidar_dados, Processar_Demandas, limpar_erros, obter_erros
+from DB import completar_informacoes, consolidar_dados, Processar_Demandas, limpar_erros, obter_erros, adicionar_erro
 import pandas as pd
 import re
 import os
@@ -142,7 +142,7 @@ def normalizar_codigos(campo):
 def input_demanda(cod_destinos, use_all_codes=False, sheet_name=None):
     """
     cod_destinos: list of codes entered by the user, e.g. [1080, 1046]
-    use_all_codes: if True, process all COD DESTINO found in demand files
+    use_all_codes: if True, process all demand rows and map COD DESTINO from FLUXO
     sheet_name: optional sheet name to read from demand files (Geral, Sábado, Domingo)
     Returns a DataFrame with all matched rows, saving full COD DESTINO values.
     """
@@ -151,42 +151,9 @@ def input_demanda(cod_destinos, use_all_codes=False, sheet_name=None):
     
     all_rows = []  # collect all rows here
 
-    # If use_all_codes is True, get all unique COD DESTINO from demand files
     if use_all_codes:
-        # Get all unique COD DESTINO from processed demand files
-        unique_cod_destinos = set()
-        pasta_demandas = os.path.join(caminho_base, "Demandas")
-        
-        if os.path.isdir(pasta_demandas):
-            for nome_arquivo in os.listdir(pasta_demandas):
-                caminho_completo = os.path.join(pasta_demandas, nome_arquivo)
-                nome_arquivo_lower = nome_arquivo.lower()
-                
-                try:
-                    if nome_arquivo_lower.endswith((".xls", ".xlsx")):
-                        # Only use sheet_name if provided, otherwise use default (first sheet)
-                        if sheet_name:
-                            df_temp = pd.read_excel(caminho_completo, sheet_name=sheet_name)
-                        else:
-                            df_temp = pd.read_excel(caminho_completo)
-                        if 'COD DESTINO' in df_temp.columns:
-                            unique_cod_destinos.update(df_temp['COD DESTINO'].dropna().astype(str).unique())
-                except Exception as e:
-                    print(f"Erro ao ler COD DESTINO de {nome_arquivo}: {e}")
-        
-        if unique_cod_destinos:
-            cod_destinos = [str(c).strip() for c in unique_cod_destinos]
-            print(f"[INFO] Usando todos os COD DESTINO encontrados: {cod_destinos}")
-        else:
-            # Fallback to provided codes if none found
-            cod_destinos = [str(c).strip() for c in cod_destinos]
-    else:
-        # ensure cod_destinos is a list of strings
-        cod_destinos = [str(c).strip() for c in cod_destinos]
-
-    for cod_dest in cod_destinos:
-        # Pass sheet_name to Processar_Demandas for saturação file processing
-        df = Processar_Demandas(cod_dest, sheet_name=sheet_name)
+        # Process all demand rows without filtering by COD DESTINO
+        df = Processar_Demandas(None, sheet_name=sheet_name)
         
         for _, row in df.iterrows():
             cod_forn = str(row["COD FORNECEDOR"]).strip() if pd.notna(row.get("COD FORNECEDOR")) else None
@@ -195,21 +162,21 @@ def input_demanda(cod_destinos, use_all_codes=False, sheet_name=None):
             codigo = None
             tipo = None
             cod_ims = None
-            cod_dest_full = cod_dest  # default
+            cod_dest_full = None  # to be set from fluxo
             matched_cod_forn = cod_forn  # usar o original se não encontrar match
 
             for _, linha_fluxo in db_fluxos.iterrows():
-                cods_sap = normalizar_codigos(linha_fluxo["COD FORNECEDOR"])
+                fornecedor_str = str(linha_fluxo["COD FORNECEDOR"]).strip()
                 cods_dest_raw = str(linha_fluxo["COD DESTINO"]).strip()
                 
                 # Pega o COD IMS do fluxo (pode estar na coluna COD IMS)
                 fluxo_cod_ims = str(linha_fluxo.get("COD IMS", "")).strip() if pd.notna(linha_fluxo.get("COD IMS")) else None
 
                 # Match por COD FORNECEDOR ou por COD IMS
-                match_fornecedor = cod_forn and cod_forn in cods_sap
+                match_fornecedor = cod_forn and cod_forn in fornecedor_str
                 match_ims = cod_ims_from_file and fluxo_cod_ims and cod_ims_from_file == fluxo_cod_ims
                 
-                if (match_fornecedor or match_ims) and cod_dest == cods_dest_raw:
+                if match_fornecedor or match_ims:
                     nome_veiculo = linha_fluxo["VEICULO PRINCIPAL"]
                     codigo = get_vehicle_code(nome_veiculo)
                     tipo = linha_fluxo.get("TIPO SATURACAO", None)
@@ -218,25 +185,85 @@ def input_demanda(cod_destinos, use_all_codes=False, sheet_name=None):
                     
                     # Se foi match por IMS, pega o COD FORNECEDOR do fluxo
                     if match_ims and not cod_forn:
-                        # Pega o primeiro COD FORNECEDOR da lista
-                        matched_cod_forn = cods_sap[0] if cods_sap else cod_ims_from_file
+                        matched_cod_forn = fornecedor_str
                     
                     break
 
-            # append full row data
-            all_rows.append({
-                "COD FORNECEDOR": matched_cod_forn,
-                "COD IMS": cod_ims or cod_ims_from_file,
-                "COD DESTINO": cod_dest_full,
-                "DESENHO": row["DESENHO"],
-                "QTDE": row["QTDE"],
-                "VEICULO": codigo,
-                "TIPO SATURACAO": tipo
-            })
+            # Only append if matched
+            if cod_dest_full is not None:
+                all_rows.append({
+                    "COD FORNECEDOR": matched_cod_forn,
+                    "COD IMS": cod_ims or cod_ims_from_file,
+                    "COD DESTINO": cod_dest_full,
+                    "DESENHO": row["DESENHO"],
+                    "QTDE": row["QTDE"],
+                    "VEICULO": codigo,
+                    "TIPO SATURACAO": tipo
+                })
+    else:
+        # ensure cod_destinos is a list of strings
+        cod_destinos = [str(c).strip() for c in cod_destinos]
+
+        for cod_dest in cod_destinos:
+            # Pass sheet_name to Processar_Demandas for saturação file processing
+            df = Processar_Demandas(cod_dest, sheet_name=sheet_name)
+            
+            for _, row in df.iterrows():
+                cod_forn = str(row["COD FORNECEDOR"]).strip() if pd.notna(row.get("COD FORNECEDOR")) else None
+                cod_ims_from_file = str(row.get("COD IMS", "")).strip() if pd.notna(row.get("COD IMS")) else None
+                
+                codigo = None
+                tipo = None
+                cod_ims = None
+                cod_dest_full = cod_dest  # default
+                matched_cod_forn = cod_forn  # usar o original se não encontrar match
+
+                for _, linha_fluxo in db_fluxos.iterrows():
+                    fornecedor_str = str(linha_fluxo["COD FORNECEDOR"]).strip()
+                    cods_dest_raw = str(linha_fluxo["COD DESTINO"]).strip()
+                    
+                    # Pega o COD IMS do fluxo (pode estar na coluna COD IMS)
+                    fluxo_cod_ims = str(linha_fluxo.get("COD IMS", "")).strip() if pd.notna(linha_fluxo.get("COD IMS")) else None
+
+                    # Match por COD FORNECEDOR ou por COD IMS
+                    match_fornecedor = cod_forn and cod_forn in fornecedor_str
+                    match_ims = cod_ims_from_file and fluxo_cod_ims and cod_ims_from_file == fluxo_cod_ims
+                    
+                    # Exact match for COD DESTINO (no splitting, match the whole string)
+                    match_cod_dest = str(cod_dest) == cods_dest_raw
+                    
+                   
+                    
+                    if (match_fornecedor or match_ims) and match_cod_dest:
+                        nome_veiculo = linha_fluxo["VEICULO PRINCIPAL"]
+                        codigo = get_vehicle_code(nome_veiculo)
+                        tipo = linha_fluxo.get("TIPO SATURACAO", None)
+                        cod_ims = linha_fluxo.get("COD IMS", None)
+                        cod_dest_full = cods_dest_raw
+                        print(f"match_fornecedor={fornecedor_str}, cod_dest={cod_dest}, cods_dest_raw={cods_dest_raw}, match_cod_dest={match_cod_dest}")
+                        
+                        # Se foi match por IMS, pega o COD FORNECEDOR do fluxo
+                        if match_ims and not cod_forn:
+                            matched_cod_forn = fornecedor_str
+                        
+                        break
+
+                # append full row data
+                all_rows.append({
+                    "COD FORNECEDOR": matched_cod_forn,
+                    "COD IMS": cod_ims or cod_ims_from_file,
+                    "COD DESTINO": cod_dest_full,
+                    "DESENHO": row["DESENHO"],
+                    "QTDE": row["QTDE"],
+                    "VEICULO": codigo,
+                    "TIPO SATURACAO": tipo
+                })
 
     df_final = pd.DataFrame(all_rows)
     df_final.to_excel("Template.xlsx", index=False)
     return df_final  # optionally return for further processing
+
+
 
 
 def apply_filters(event=None):
@@ -377,7 +404,7 @@ cod_destino_var = StringVar(value='1080')
 
 def validate_numeric(P):
     # Allow digits, commas, and optional spaces
-    return all(c.isdigit() or c in [',', ' ','/'] for c in P)
+    return all(c.isdigit() or c in [',', ' ','/',''] for c in P)
 
 
 vcmd = (janela.register(validate_numeric), '%P')
@@ -552,7 +579,25 @@ def atualizar():
             janela.after(0, lambda: finalizar_status("Concluído com sucesso!", "#2e8b57"))
 
         except Exception as e:
-            print(f"Ocorreu um erro durante a atualização: {e}")
+            adicionar_erro(str(e), "AVISO")
+            # Mostra erros/avisos se houver
+            erros = obter_erros()
+            if erros:
+                # Separa erros e avisos
+                erros_criticos = [e for e in erros if '[ERRO]' in e]
+                avisos = [e for e in erros if '[AVISO]' in e]
+                
+                mensagem = ""
+                if erros_criticos:
+                    mensagem += "ERROS ENCONTRADOS:\n" + "\n".join(erros_criticos) + "\n\n"
+                if avisos:
+                    mensagem += "AVISOS:\n" + "\n".join(avisos)
+                
+                # Mostra popup com os erros
+                if erros_criticos:
+                    messagebox.showwarning("Atenção - Problemas Detectados", mensagem)
+                else:
+                    messagebox.showinfo("Avisos de Processamento", mensagem)
             loading_label.spinning = False
             janela.after(0, lambda: finalizar_status(f"Erro: {e}", "red"))
 
