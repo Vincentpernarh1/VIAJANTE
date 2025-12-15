@@ -190,23 +190,28 @@ def input_demanda(cod_destinos, use_all_codes=False, sheet_name=None):
                     break
 
             # Only append if matched
-            if cod_dest_full is not None:
-                all_rows.append({
-                    "COD FORNECEDOR": matched_cod_forn,
-                    "COD IMS": cod_ims or cod_ims_from_file,
-                    "COD DESTINO": cod_dest_full,
-                    "DESENHO": row["DESENHO"],
-                    "QTDE": row["QTDE"],
-                    "VEICULO": codigo,
-                    "TIPO SATURACAO": tipo
-                })
+            matched = cod_dest_full is not None
+            status = "" if matched else "fornecedor não existe no fluxo"
+            all_rows.append({
+                "COD FORNECEDOR": matched_cod_forn,
+                "COD IMS": cod_ims or cod_ims_from_file,
+                "COD DESTINO": cod_dest_full,
+                "DESENHO": row["DESENHO"],
+                "QTDE": row["QTDE"],
+                "VEICULO": codigo,
+                "TIPO SATURACAO": tipo,
+                "STATUS": status
+            })
     else:
         # ensure cod_destinos is a list of strings
+       
         cod_destinos = [str(c).strip() for c in cod_destinos]
+        cod_destinos = list(set(cod_destinos))  # remove duplicates
+        
+        # Pass sheet_name to Processar_Demandas for saturação file processing
+        df = Processar_Demandas(cod_destinos[0], sheet_name=sheet_name)
 
         for cod_dest in cod_destinos:
-            # Pass sheet_name to Processar_Demandas for saturação file processing
-            df = Processar_Demandas(cod_dest, sheet_name=sheet_name)
             
             for _, row in df.iterrows():
                 cod_forn = str(row["COD FORNECEDOR"]).strip() if pd.notna(row.get("COD FORNECEDOR")) else None
@@ -217,6 +222,7 @@ def input_demanda(cod_destinos, use_all_codes=False, sheet_name=None):
                 cod_ims = None
                 cod_dest_full = cod_dest  # default
                 matched_cod_forn = cod_forn  # usar o original se não encontrar match
+                matched = False  # flag to track if a match was found
 
                 for _, linha_fluxo in db_fluxos.iterrows():
                     fornecedor_str = str(linha_fluxo["COD FORNECEDOR"]).strip()
@@ -240,26 +246,29 @@ def input_demanda(cod_destinos, use_all_codes=False, sheet_name=None):
                         tipo = linha_fluxo.get("TIPO SATURACAO", None)
                         cod_ims = linha_fluxo.get("COD IMS", None)
                         cod_dest_full = cods_dest_raw
-                        print(f"match_fornecedor={fornecedor_str}, cod_dest={cod_dest}, cods_dest_raw={cods_dest_raw}, match_cod_dest={match_cod_dest}")
+                        # print(f"match_fornecedor={fornecedor_str}, cod_dest={cod_dest}, cods_dest_raw={cods_dest_raw}, match_cod_dest={match_cod_dest}")
                         
                         # Se foi match por IMS, pega o COD FORNECEDOR do fluxo
                         if match_ims and not cod_forn:
                             matched_cod_forn = fornecedor_str
                         
+                        matched = True  # set flag to True on match
                         break
 
-                # append full row data
-                all_rows.append({
-                    "COD FORNECEDOR": matched_cod_forn,
-                    "COD IMS": cod_ims or cod_ims_from_file,
-                    "COD DESTINO": cod_dest_full,
-                    "DESENHO": row["DESENHO"],
-                    "QTDE": row["QTDE"],
-                    "VEICULO": codigo,
-                    "TIPO SATURACAO": tipo
-                })
+                # Only append if matched
+                if matched:
+                    all_rows.append({
+                        "COD FORNECEDOR": matched_cod_forn,
+                        "COD IMS": cod_ims or cod_ims_from_file,
+                        "COD DESTINO": cod_dest_full,
+                        "DESENHO": row["DESENHO"],
+                        "QTDE": row["QTDE"],
+                        "VEICULO": codigo,
+                        "TIPO SATURACAO": tipo
+                    })
 
-    df_final = pd.DataFrame(all_rows)
+    df_final = pd.DataFrame(all_rows).drop_duplicates().reset_index(drop=True)
+    
     df_final.to_excel("Template.xlsx", index=False)
     return df_final  # optionally return for further processing
 
