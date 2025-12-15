@@ -562,7 +562,13 @@ def atualizar():
                     combo['values'] = ["-- All --"] + unique_values
                     combo.set('')
 
-                consolidar_dados()
+                # Prepare manual vehicle code to pass into consolidar_dados
+                try:
+                    manual_code = int(cod) if cod not in [None, ''] else None
+                except Exception:
+                    manual_code = cod if cod not in [None, ''] else None
+
+                consolidar_dados(use_manual=modo_manual.get(), manual_veiculo=manual_code)
                 
                 # Mostra erros/avisos se houver
                 erros = obter_erros()

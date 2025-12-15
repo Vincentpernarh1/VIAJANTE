@@ -538,6 +538,15 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
         mapa_peso_mdr = db_MDR.drop_duplicates('MDR').set_index('MDR')['MDR PESO']
         mapa_peso_max = db_veiculos.set_index('COD VEICULO')['PESO MAXIMO']
 
+        # If user chose to force a manual vehicle for the whole run,
+        # override the `VEICULO` column in the template so the saved
+        # `VIAJANTE.xlsx` reflects the selected vehicle.
+        if usar_manual and veiculo is not None:
+            try:
+                template['VEICULO'] = int(veiculo)
+            except Exception:
+                template['VEICULO'] = veiculo
+
         # --- Enriquecimento do template ---
 
         # Passo 1: primeiro trazer MDR pelo DESENHO, para podermos montar a KEY
@@ -860,7 +869,7 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
         traceback.print_exc()
 
 
-def consolidar_dados():
+def consolidar_dados(use_manual=False, manual_veiculo=None):
     # Carrega os dados
     fluxos_path = os.path.join(caminho_base, "BD", "FLUXO.xlsx")
     fluxos = pd.read_excel(fluxos_path, sheet_name='FLUXOS')
@@ -882,6 +891,66 @@ def consolidar_dados():
         fluxos['COD IMS'] = fluxos['COD IMS'].astype(str).str.strip()
 
     template['FORNECEDOR'] = template['FORNECEDOR'].fillna('').astype(str)
+
+    # If user forced a manual vehicle, override the template VEICULO column
+    if use_manual and manual_veiculo is not None:
+        try:
+            template['VEICULO'] = int(manual_veiculo)
+        except Exception:
+            template['VEICULO'] = manual_veiculo
+        # Try to persist the overridden Template Completo back into VIAJANTE.xlsx
+        try:
+            via_path = os.path.join(caminho_base, 'VIAJANTE.xlsx')
+            if os.path.exists(via_path):
+                with pd.ExcelWriter(via_path, engine='openpyxl', mode='a', if_sheet_exists='replace') as writer:
+                    template.to_excel(writer, sheet_name='Template Completo', index=False)
+        except Exception:
+            # Non-fatal: continue even if we can't write back to the file
+            pass
+
+    # Build vehicle code -> display name mapping (if BD/VEÍCULOS exists)
+    code_to_vehicle_name = {}
+    try:
+        veic_path = os.path.join(caminho_base, 'BD', 'VEÍCULOS.xlsx')
+        if os.path.exists(veic_path):
+            db_veic = pd.read_excel(veic_path)
+            cols = {c.strip().upper(): c for c in db_veic.columns}
+            code_col = None
+            name_col = None
+            # Prefer explicit 'DESCRICAO' column for vehicle display name
+            for up, orig in cols.items():
+                if up == 'DESCRICAO':
+                    name_col = orig
+                if 'COD' in up and 'VEIC' in up:
+                    code_col = orig
+            # Fallbacks
+            if code_col is None:
+                for up, orig in cols.items():
+                    if 'COD' in up:
+                        code_col = orig
+                        break
+            if name_col is None:
+                # try any column containing 'VEIC' or 'VEICULO'
+                for up, orig in cols.items():
+                    if 'VEIC' in up or 'VEICULO' in up:
+                        name_col = orig
+                        break
+            if name_col is None and len(db_veic.columns) > 1:
+                name_col = db_veic.columns[1]
+
+            if code_col and name_col:
+                for _, r in db_veic.iterrows():
+                    raw_code = r.get(code_col)
+                    try:
+                        key = int(raw_code)
+                    except Exception:
+                        try:
+                            key = int(float(str(raw_code)))
+                        except Exception:
+                            key = str(raw_code).strip()
+                    code_to_vehicle_name[key] = str(r.get(name_col, '')).strip()
+    except Exception:
+        code_to_vehicle_name = {}
 
     def normalizar_codigos(campo):
         if pd.isna(campo):
@@ -978,13 +1047,27 @@ def consolidar_dados():
                 perc_mdr = round((desenhos_apurados / total_desenhos) * 100, 1) if total_desenhos else 0.0
 
                 if perc_mdr != 0:
+                    # If user elected to force a manual vehicle for the whole run,
+                    # override the route vehicle with the provided manual code.
+                    veiculo_final = manual_veiculo if use_manual and manual_veiculo is not None else veiculo
+
+                    # Convert code to display name when possible so the Excel shows names
+                    veiculo_display = veiculo_final
+                    try:
+                        # try numeric code
+                        code_int = int(veiculo_final)
+                        veiculo_display = code_to_vehicle_name.get(code_int, veiculo_final)
+                    except Exception:
+                        # leave as-is (could already be a name)
+                        veiculo_display = veiculo_final
+
                     dados_volume.append({
                         'COD FLUXO': cod_fluxo,
                         'COD DESTINO': cod_dest,
                         'DESTINO': destino,
                         'CÓDIGOS FORNECEDORES': ', '.join(fornecedores_comuns),
                         'FORNECEDORES NA ROTA': ', '.join(nomes_ordenados),
-                        'VEÍCULO': veiculo,
+                        'VEÍCULO': veiculo_display,
                         'TECNOLOGIA': rota['TECNOLOGIA'],
                         'MOT': rota['MOT'],
                         'TRANSPORTADORA': transportadora,
