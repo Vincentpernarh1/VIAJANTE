@@ -11,6 +11,7 @@ import os
 import numpy as np
 import warnings 
 import contextlib
+import unicodedata
 
 # Suppress xlrd / Excel warnings
 warnings.simplefilter("ignore")
@@ -41,9 +42,11 @@ caminho_base = os.getcwd()
 erros_processamento = []
 
 def adicionar_erro(mensagem, tipo="ERRO"):
-    """Adiciona uma mensagem de erro ou aviso à lista global"""
-    erros_processamento.append(f"[{tipo}] {mensagem}")
-    print(f"[{tipo}] {mensagem}")
+    """Adiciona uma mensagem de erro ou aviso à lista global sem duplicatas."""
+    msg = f"[{tipo}] {mensagem}"
+    if msg not in erros_processamento:
+        erros_processamento.append(msg)
+        print(msg)
 
 def limpar_erros():
     """Limpa a lista de erros"""
@@ -538,14 +541,8 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
         mapa_peso_mdr = db_MDR.drop_duplicates('MDR').set_index('MDR')['MDR PESO']
         mapa_peso_max = db_veiculos.set_index('COD VEICULO')['PESO MAXIMO']
 
-        # If user chose to force a manual vehicle for the whole run,
-        # override the `VEICULO` column in the template so the saved
-        # `VIAJANTE.xlsx` reflects the selected vehicle.
-        if usar_manual and veiculo is not None:
-            try:
-                template['VEICULO'] = int(veiculo)
-            except Exception:
-                template['VEICULO'] = veiculo
+        # keep template VEICULO as-is here; Template.xlsx will be
+        # updated by input_demanda() when the user forces manual vehicle.
 
         # --- Enriquecimento do template ---
 
@@ -902,8 +899,19 @@ def consolidar_dados(use_manual=False, manual_veiculo=None):
         try:
             via_path = os.path.join(caminho_base, 'VIAJANTE.xlsx')
             if os.path.exists(via_path):
+                out_template = template.copy()
+                try:
+                    # map codes to names using code_to_vehicle_name if available
+                    def map_name2(v):
+                        try:
+                            return code_to_vehicle_name.get(int(v), v)
+                        except Exception:
+                            return code_to_vehicle_name.get(v, v)
+                    out_template['VEICULO'] = out_template['VEICULO'].apply(map_name2)
+                except Exception:
+                    pass
                 with pd.ExcelWriter(via_path, engine='openpyxl', mode='a', if_sheet_exists='replace') as writer:
-                    template.to_excel(writer, sheet_name='Template Completo', index=False)
+                    out_template.to_excel(writer, sheet_name='Template Completo', index=False)
         except Exception:
             # Non-fatal: continue even if we can't write back to the file
             pass

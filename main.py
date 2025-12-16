@@ -117,6 +117,53 @@ for k, v in veiculos_display.items():
 # ------------------------------------------------------------------
 
 
+def show_temporary_message(master, title, mensagem, kind="info", timeout=10000):
+    try:
+        top = Toplevel(master)
+        top.title(title)
+        top.transient(master)
+        top.attributes("-topmost", True)
+        top.resizable(False, False)
+
+        # Compact frame to mimic the native messagebox layout
+        frm = Frame(top, padx=12, pady=8)
+        frm.pack(fill=BOTH, expand=True)
+
+        # Use a simple Label with wraplength to resemble messagebox text
+        lbl = Label(frm, text=mensagem, justify=LEFT, anchor='w', wraplength=420)
+        lbl.pack(fill=BOTH, expand=True)
+
+        # Button frame to center the OK button similar to messagebox
+        btn_frm = Frame(frm)
+        btn_frm.pack(fill=X, pady=(8, 0))
+        btn = Button(btn_frm, text="OK", width=10, command=top.destroy)
+        btn.pack(side=RIGHT)
+
+        # center relative to master if possible
+        try:
+            top.update_idletasks()
+            mw = master.winfo_width()
+            mh = master.winfo_height()
+            mx = master.winfo_rootx()
+            my = master.winfo_rooty()
+            w = top.winfo_width()
+            h = top.winfo_height()
+            x = mx + (mw // 2) - (w // 2)
+            y = my + (mh // 2) - (h // 2)
+            top.geometry(f"+{x}+{y}")
+        except Exception:
+            pass
+
+        top.after(timeout, top.destroy)
+    except Exception:
+        # fallback to blocking messagebox
+        if kind == "warning":
+            messagebox.showwarning(title, mensagem)
+        else:
+            messagebox.showinfo(title, mensagem)
+
+
+
 def get_vehicle_code(nome_veiculo):
     """
     Robust lookup: try exact name, stripped, upper-case, and finally fallback to None.
@@ -139,7 +186,7 @@ def normalizar_codigos(campo):
     return [c.strip() for c in re.split(r'\s*,\s*', str(campo).strip()) if c.strip()]
 
 
-def input_demanda(cod_destinos, use_all_codes=False, sheet_name=None):
+def input_demanda(cod_destinos, use_all_codes=False, sheet_name=None, use_manual=False, manual_veiculo=None):
     """
     cod_destinos: list of codes entered by the user, e.g. [1080, 1046]
     use_all_codes: if True, process all demand rows and map COD DESTINO from FLUXO
@@ -268,7 +315,14 @@ def input_demanda(cod_destinos, use_all_codes=False, sheet_name=None):
                     })
 
     df_final = pd.DataFrame(all_rows).drop_duplicates().reset_index(drop=True)
-    
+
+    # If user chose to force a manual vehicle, override the VEICULO column
+    if use_manual and manual_veiculo is not None:
+        try:
+            df_final['VEICULO'] = int(manual_veiculo)
+        except Exception:
+            df_final['VEICULO'] = manual_veiculo
+
     df_final.to_excel("Template.xlsx", index=False)
     return df_final  # optionally return for further processing
 
@@ -517,6 +571,12 @@ def atualizar():
             cod = veiculo_var.get()
             label_veiculo.config(text=f"Código selecionado: {cod}")
 
+            # Prepare manual vehicle code to pass into input_demanda and consolidar_dados
+            try:
+                manual_code = int(cod) if cod not in [None, ''] else None
+            except Exception:
+                manual_code = cod if cod not in [None, ''] else None
+
             if cod:
                 # Limpa erros anteriores antes de processar
                 limpar_erros()
@@ -527,7 +587,7 @@ def atualizar():
                 use_all = use_all_cod_destino.get()
                 # Get selected sheet name from Flechinha dropdown (only if not empty)
                 selected_sheet = flechinha_var.get() if flechinha_var.get() else None
-                df_final = input_demanda(cod_destino_values, use_all_codes=use_all, sheet_name=selected_sheet)  # all codes processed together
+                df_final = input_demanda(cod_destino_values, use_all_codes=use_all, sheet_name=selected_sheet, use_manual=modo_manual.get(), manual_veiculo=manual_code)  # all codes processed together
 
                 completar_informacoes(
                     tree, int(cod), tree_resumo, canvas_caminhoes, caminhao_img, usar_manual=modo_manual.get()
@@ -583,11 +643,11 @@ def atualizar():
                     if avisos:
                         mensagem += "AVISOS:\n" + "\n".join(avisos)
                     
-                    # Mostra popup com os erros
+                    # Mostra popup com os erros (auto-closing)
                     if erros_criticos:
-                        messagebox.showwarning("Atenção - Problemas Detectados", mensagem)
+                        janela.after(0, lambda: show_temporary_message(janela, "Atenção - Problemas Detectados", mensagem, kind="warning", timeout=10000))
                     else:
-                        messagebox.showinfo("Avisos de Processamento", mensagem)
+                        janela.after(0, lambda: show_temporary_message(janela, "Avisos de Processamento", mensagem, kind="info", timeout=10000))
 
             # --- Stop spinner and show success ---
             loading_label.spinning = False
@@ -608,11 +668,11 @@ def atualizar():
                 if avisos:
                     mensagem += "AVISOS:\n" + "\n".join(avisos)
                 
-                # Mostra popup com os erros
+                # Mostra popup com os erros (auto-closing)
                 if erros_criticos:
-                    messagebox.showwarning("Atenção - Problemas Detectados", mensagem)
+                    janela.after(0, lambda: show_temporary_message(janela, "Atenção - Problemas Detectados", mensagem, kind="warning", timeout=10000))
                 else:
-                    messagebox.showinfo("Avisos de Processamento", mensagem)
+                    janela.after(0, lambda: show_temporary_message(janela, "Avisos de Processamento", mensagem, kind="info", timeout=10000))
             loading_label.spinning = False
             janela.after(0, lambda: finalizar_status(f"Erro: {e}", "red"))
 
