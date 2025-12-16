@@ -205,50 +205,56 @@ def input_demanda(cod_destinos, use_all_codes=False, sheet_name=None, use_manual
         for _, row in df.iterrows():
             cod_forn = str(row["COD FORNECEDOR"]).strip() if pd.notna(row.get("COD FORNECEDOR")) else None
             cod_ims_from_file = str(row.get("COD IMS", "")).strip() if pd.notna(row.get("COD IMS")) else None
-            
-            codigo = None
-            tipo = None
-            cod_ims = None
-            cod_dest_full = None  # to be set from fluxo
-            matched_cod_forn = cod_forn  # usar o original se não encontrar match
 
+            matched_cod_forn = cod_forn  # usar o original se não encontrar match
+            matched_any = False
+
+            # For each fluxo row, if it matches, append a separate output row
             for _, linha_fluxo in db_fluxos.iterrows():
                 fornecedor_str = str(linha_fluxo["COD FORNECEDOR"]).strip()
                 cods_dest_raw = str(linha_fluxo["COD DESTINO"]).strip()
-                
+
                 # Pega o COD IMS do fluxo (pode estar na coluna COD IMS)
                 fluxo_cod_ims = str(linha_fluxo.get("COD IMS", "")).strip() if pd.notna(linha_fluxo.get("COD IMS")) else None
 
                 # Match por COD FORNECEDOR ou por COD IMS
                 match_fornecedor = cod_forn and cod_forn in fornecedor_str
                 match_ims = cod_ims_from_file and fluxo_cod_ims and cod_ims_from_file == fluxo_cod_ims
-                
+
                 if match_fornecedor or match_ims:
+                    matched_any = True
                     nome_veiculo = linha_fluxo["VEICULO PRINCIPAL"]
                     codigo = get_vehicle_code(nome_veiculo)
                     tipo = linha_fluxo.get("TIPO SATURACAO", None)
-                    cod_ims = linha_fluxo.get("COD IMS", None)
+                    fluxo_cod_ims_val = linha_fluxo.get("COD IMS", None)
                     cod_dest_full = cods_dest_raw
-                    
-                    # Se foi match por IMS, pega o COD FORNECEDOR do fluxo
-                    if match_ims and not cod_forn:
-                        matched_cod_forn = fornecedor_str
-                    
-                    break
 
-            # Only append if matched
-            matched = cod_dest_full is not None
-            status = "" if matched else "fornecedor não existe no fluxo"
-            all_rows.append({
-                "COD FORNECEDOR": matched_cod_forn,
-                "COD IMS": cod_ims or cod_ims_from_file,
-                "COD DESTINO": cod_dest_full,
-                "DESENHO": row["DESENHO"],
-                "QTDE": row["QTDE"],
-                "VEICULO": codigo,
-                "TIPO SATURACAO": tipo,
-                "STATUS": status
-            })
+                    # Se foi match por IMS e arquivo não trazia fornecedor, usa o fornecedor do fluxo
+                    matched_fornecedor_to_use = fornecedor_str if (match_ims and not cod_forn) else matched_cod_forn
+
+                    all_rows.append({
+                        "COD FORNECEDOR": matched_fornecedor_to_use,
+                        "COD IMS": fluxo_cod_ims_val or cod_ims_from_file,
+                        "COD DESTINO": cod_dest_full,
+                        "DESENHO": row["DESENHO"],
+                        "QTDE": row["QTDE"],
+                        "VEICULO": codigo,
+                        "TIPO SATURACAO": tipo,
+                        "STATUS": ""
+                    })
+
+            # If no fluxo match was found for this demand row, still append a row indicating missing fornecedor
+            if not matched_any:
+                all_rows.append({
+                    "COD FORNECEDOR": matched_cod_forn,
+                    "COD IMS": cod_ims_from_file,
+                    "COD DESTINO": None,
+                    "DESENHO": row["DESENHO"],
+                    "QTDE": row["QTDE"],
+                    "VEICULO": None,
+                    "TIPO SATURACAO": None,
+                    "STATUS": "fornecedor não existe no fluxo"
+                })
     else:
         # ensure cod_destinos is a list of strings
        
