@@ -242,6 +242,7 @@ def input_demanda(cod_destinos, use_all_codes=False, sheet_name=None, use_manual
                         "TIPO SATURACAO": tipo,
                         "STATUS": ""
                     })
+            # print(f"All rows length: {len(all_rows)}")
 
             # If no fluxo match was found for this demand row, still append a row indicating missing fornecedor
             if not matched_any:

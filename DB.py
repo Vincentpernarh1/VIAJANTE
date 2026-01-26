@@ -188,8 +188,6 @@ def Processar_Demandas(cod_destino, pasta_demandas="Demandas", sheet_name=None):
                     elif 'QUANTIDADE' in col_upper and 'SOLICITADA' in col_upper:
                         colunas_saturacao_mapeamento[col] = 'QTDE'
                 
-                # print(f"Mapeamento de colunas criado: {colunas_saturacao_mapeamento}")
-                
                 # Verifica se encontrou as colunas OBRIGATÓRIAS (DESENHO e QTDE)
                 tem_desenho = 'DESENHO' in colunas_saturacao_mapeamento.values()
                 tem_qtde = 'QTDE' in colunas_saturacao_mapeamento.values()
@@ -221,9 +219,6 @@ def Processar_Demandas(cod_destino, pasta_demandas="Demandas", sheet_name=None):
                 # 5. Adiciona a coluna COD DESTINO
                 if cod_destino is not None:
                     df_temp["COD DESTINO"] = cod_destino
-
-                # print(f"DataFrame processado com {len(df_temp)} linhas")
-                # print(f"Colunas finais: {list(df_temp.columns)}")
                 
                 # 4. Adiciona o DataFrame processado à lista para concatenação posterior
                 lista_dfs.append(df_temp)
@@ -870,16 +865,20 @@ def consolidar_dados(use_manual=False, manual_veiculo=None):
     # Carrega os dados
     fluxos_path = os.path.join(caminho_base, "BD", "FLUXO.xlsx")
     fluxos = pd.read_excel(fluxos_path, sheet_name='FLUXOS')
+    
     template = pd.read_excel('VIAJANTE.xlsx', sheet_name='Template Completo')
 
     # Filtra linhas com quantidade válida e prepara as colunas
     template = template[template['QTDE'] > 0].copy()
     template['COD FORNECEDOR'] = template['COD FORNECEDOR'].astype(str).str.strip()
     template['COD DESTINO'] = template['COD DESTINO'].astype(str).str.strip()
+    template['COD DESTINO'] = template['COD DESTINO'].str.replace(r'\.0$', '', regex=True)
     
     # Normalize FLUXO data types
     fluxos['COD FORNECEDOR'] = fluxos['COD FORNECEDOR'].astype(str).str.strip()
     fluxos['COD DESTINO'] = fluxos['COD DESTINO'].astype(str).str.strip()
+    fluxos['COD DESTINO'] = fluxos['COD DESTINO'].str.replace(r'\.0$', '', regex=True)
+    
     
     # Handle COD IMS if present
     if 'COD IMS' in template.columns:
@@ -967,8 +966,12 @@ def consolidar_dados(use_manual=False, manual_veiculo=None):
 
     dados_volume = []
 
-    # Collect all unique destination codes from template as exact strings
-    all_cod_destinos = set(template['COD DESTINO'].dropna().unique())
+    # Collect all unique destination codes from template, cleaning them.
+    # It filters out 'nan' strings, as '.0' normalization now happens earlier.
+    s = template['COD DESTINO'].dropna()
+    s = s[s.str.lower() != 'nan']
+    all_cod_destinos = set(s.unique())
+    
     
     for cod_dest in all_cod_destinos:
         # Find all rows in template that match this exact destination code
@@ -987,6 +990,7 @@ def consolidar_dados(use_manual=False, manual_veiculo=None):
         # Find routes that match this exact destination code
         mask_fluxo = fluxos['COD DESTINO'] == cod_dest
         rotas_destino = fluxos[mask_fluxo]
+     
         
         for _, rota in rotas_destino.iterrows():
             cod_fluxo = rota['COD FLUXO']
@@ -1003,7 +1007,7 @@ def consolidar_dados(use_manual=False, manual_veiculo=None):
 
             # Find common suppliers between template and route
             fornecedores_comuns = [f for f in fornecedores_rota if f in fornecedores_template_set]
-
+     
             if fornecedores_comuns:
                 # Find template rows that match - check both COD IMS and COD FORNECEDOR
                 def row_matches_suppliers(row):
@@ -1052,8 +1056,8 @@ def consolidar_dados(use_manual=False, manual_veiculo=None):
                 total_desenhos = linhas_rota['DESENHO'].nunique()
                 desenhos_apurados = linhas_rota[linhas_rota[coluna_sat].fillna(0) > 0]['DESENHO'].nunique()
 
-                perc_mdr = round((desenhos_apurados / total_desenhos) * 100, 1) if total_desenhos else 0.0
-
+                perc_mdr = round((desenhos_apurados / total_desenhos) * 100, 1) if total_desenhos else 0.0                
+                
                 if perc_mdr != 0:
                     # If user elected to force a manual vehicle for the whole run,
                     # override the route vehicle with the provided manual code.
@@ -1068,7 +1072,9 @@ def consolidar_dados(use_manual=False, manual_veiculo=None):
                     except Exception:
                         # leave as-is (could already be a name)
                         veiculo_display = veiculo_final
-
+                        
+                        
+                    
                     dados_volume.append({
                         'COD FLUXO': cod_fluxo,
                         'COD DESTINO': cod_dest,
@@ -1088,8 +1094,10 @@ def consolidar_dados(use_manual=False, manual_veiculo=None):
                         'SUGESTÃO': sugestao,
                         '% MDRs APURADOS': perc_mdr
                     })
-
+     
     df_volume = pd.DataFrame(dados_volume)
+    
+    
     df_volume.to_excel('Volume_por_rota.xlsx', index=False)
 #tree = ttk.Treeview()
 #tree_resumo = ttk.Treeview()
