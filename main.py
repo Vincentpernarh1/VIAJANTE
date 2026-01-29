@@ -205,6 +205,7 @@ def input_demanda(cod_destinos, use_all_codes=False, sheet_name=None, use_manual
         for _, row in df.iterrows():
             cod_forn = str(row["COD FORNECEDOR"]).strip() if pd.notna(row.get("COD FORNECEDOR")) else None
             cod_ims_from_file = str(row.get("COD IMS", "")).strip() if pd.notna(row.get("COD IMS")) else None
+            
 
             matched_cod_forn = cod_forn  # usar o original se não encontrar match
             matched_any = False
@@ -231,7 +232,7 @@ def input_demanda(cod_destinos, use_all_codes=False, sheet_name=None, use_manual
 
                     # Se foi match por IMS e arquivo não trazia fornecedor, usa o fornecedor do fluxo
                     matched_fornecedor_to_use = fornecedor_str if (match_ims and not cod_forn) else matched_cod_forn
-
+                    
                     all_rows.append({
                         "COD FORNECEDOR": matched_fornecedor_to_use,
                         "COD IMS": fluxo_cod_ims_val or cod_ims_from_file,
@@ -242,10 +243,12 @@ def input_demanda(cod_destinos, use_all_codes=False, sheet_name=None, use_manual
                         "TIPO SATURACAO": tipo,
                         "STATUS": ""
                     })
-            # print(f"All rows length: {len(all_rows)}")
-
+    
+                              
+                   
+                        
             # If no fluxo match was found for this demand row, still append a row indicating missing fornecedor
-            if not matched_any:
+            if not matched_any:                
                 all_rows.append({
                     "COD FORNECEDOR": matched_cod_forn,
                     "COD IMS": cod_ims_from_file,

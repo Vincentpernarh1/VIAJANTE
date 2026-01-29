@@ -205,13 +205,16 @@ def Processar_Demandas(cod_destino, pasta_demandas="Demandas", sheet_name=None):
                 
                 # 2. Renomeia as colunas para o padrão final
                 df_temp.rename(columns=colunas_saturacao_mapeamento, inplace=True)
-
+                
+                
+                
                 # 3. Remove .0 do final dos valores de COD IMS (converte para int, depois para string)
                 if 'COD IMS' in df_temp.columns:
                     df_temp['COD IMS'] = pd.to_numeric(df_temp['COD IMS'], errors='coerce')
                     df_temp['COD IMS'] = df_temp['COD IMS'].fillna(0).astype(int).astype(str)
                     # df_temp['COD IMS'] = df_temp['COD IMS'].replace('0', pd.NA)  # Restaura NaN onde era 0
-
+                    
+                
                 # 4. COD FORNECEDOR sempre nulo para arquivos de saturação (será preenchido depois via COD IMS)
                 df_temp['COD FORNECEDOR'] = pd.NA
                 # print(f"INFO: Coluna 'COD FORNECEDOR' definida como nula (será derivada de COD IMS).")
@@ -962,9 +965,12 @@ def consolidar_dados(use_manual=False, manual_veiculo=None):
     def normalizar_codigos(campo):
         if pd.isna(campo):
             return []
-        return [c.strip() for c in re.split(r'\s*,\s*', str(campo).strip()) if c.strip()]
+        return [c.strip() for c in re.split(r'\s*[,/]\s*', str(campo).strip()) if c.strip()]
 
     dados_volume = []
+
+    processed_suppliers = set()
+    all_template_suppliers = set()
 
     # Collect all unique destination codes from template, cleaning them.
     # It filters out 'nan' strings, as '.0' normalization now happens earlier.
@@ -987,6 +993,10 @@ def consolidar_dados(use_manual=False, manual_veiculo=None):
             else:
                 fornecedores_template_set.update(normalizar_codigos(row['COD FORNECEDOR']))
 
+    
+
+        all_template_suppliers.update(fornecedores_template_set)
+
         # Find routes that match this exact destination code
         mask_fluxo = fluxos['COD DESTINO'] == cod_dest
         rotas_destino = fluxos[mask_fluxo]
@@ -1007,17 +1017,25 @@ def consolidar_dados(use_manual=False, manual_veiculo=None):
 
             # Find common suppliers between template and route
             fornecedores_comuns = [f for f in fornecedores_rota if f in fornecedores_template_set]
-     
+             
             if fornecedores_comuns:
+                processed_suppliers.update(fornecedores_comuns)
                 # Find template rows that match - check both COD IMS and COD FORNECEDOR
+    
                 def row_matches_suppliers(row):
                     row_codes = set()
                     if 'COD IMS' in template.columns and pd.notna(row.get('COD IMS')) and str(row.get('COD IMS')).strip() not in ['', 'nan', 'None']:
                         row_codes.update(normalizar_codigos(row['COD IMS']))
+                    
                     row_codes.update(normalizar_codigos(row['COD FORNECEDOR']))
+                    
                     return any(f in row_codes for f in fornecedores_comuns)
                 
+                
+                
                 mask_fornecedor = subset_template.apply(row_matches_suppliers, axis=1)
+                
+                
                 linhas_rota = subset_template[mask_fornecedor]
 
                 volume_total = linhas_rota['M³'].sum()
@@ -1031,14 +1049,18 @@ def consolidar_dados(use_manual=False, manual_veiculo=None):
 
                 nomes_fornecedores = linhas_rota[['COD FORNECEDOR', 'FORNECEDOR']].drop_duplicates()
                 nomes_fornecedores['COD FORNECEDOR'] = nomes_fornecedores['COD FORNECEDOR'].astype(str)
+                
+                
 
                 # Get supplier names in order
                 nomes_ordenados = []
                 for f in fornecedores_comuns:
                     matching = nomes_fornecedores[nomes_fornecedores['COD FORNECEDOR'].apply(lambda x: f in normalizar_codigos(x))]
+                                            
                     if not matching.empty:
                         nomes_ordenados.append(matching.iloc[0]['FORNECEDOR'])
-
+                        
+                        
                 cargas = ceil(saturacao_total / 100) if saturacao_total > 0 else 0
 
                 # Coluna de Sugestão
@@ -1056,7 +1078,7 @@ def consolidar_dados(use_manual=False, manual_veiculo=None):
                 total_desenhos = linhas_rota['DESENHO'].nunique()
                 desenhos_apurados = linhas_rota[linhas_rota[coluna_sat].fillna(0) > 0]['DESENHO'].nunique()
 
-                perc_mdr = round((desenhos_apurados / total_desenhos) * 100, 1) if total_desenhos else 0.0                
+                perc_mdr = round((desenhos_apurados / total_desenhos) * 100, 1) if total_desenhos else 0.0
                 
                 if perc_mdr != 0:
                     # If user elected to force a manual vehicle for the whole run,
@@ -1079,7 +1101,7 @@ def consolidar_dados(use_manual=False, manual_veiculo=None):
                         'COD FLUXO': cod_fluxo,
                         'COD DESTINO': cod_dest,
                         'DESTINO': destino,
-                        'CÓDIGOS FORNECEDORES': ', '.join(fornecedores_comuns),
+                        'CÓDIGOS FORNECEDORES': '/'.join(fornecedores_comuns),
                         'FORNECEDORES NA ROTA': ', '.join(nomes_ordenados),
                         'VEÍCULO': veiculo_display,
                         'TECNOLOGIA': rota['TECNOLOGIA'],
@@ -1095,10 +1117,14 @@ def consolidar_dados(use_manual=False, manual_veiculo=None):
                         '% MDRs APURADOS': perc_mdr
                     })
      
+    missing = all_template_suppliers - processed_suppliers
+    print(f"Suppliers in template but not processed: {missing}")
+    
     df_volume = pd.DataFrame(dados_volume)
     
     
     df_volume.to_excel('Volume_por_rota.xlsx', index=False)
+    
 #tree = ttk.Treeview()
 #tree_resumo = ttk.Treeview()
 #completar_informacoes(tree,3, tree_resumo)
