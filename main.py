@@ -3,7 +3,6 @@ from tkinter import ttk
 from tkinter import Canvas
 from tkinter import messagebox
 from PIL import Image, ImageTk
-# Assuming DB.py contains the functions as used in your original code
 from DB import completar_informacoes, consolidar_dados, Processar_Demandas, limpar_erros, obter_erros, adicionar_erro
 import pandas as pd
 import re
@@ -196,6 +195,69 @@ def input_demanda(cod_destinos, use_all_codes=False, sheet_name=None, use_manual
     fluxos = os.path.join(caminho_base, "BD", "FLUXO.xlsx")
     db_fluxos = pd.read_excel(fluxos, sheet_name='FLUXOS')
     
+    # Load PN_Conta_trabalho for CT filtering during template creation
+    pn_ct_lookup = set()
+    try:
+        pn_ct_path = os.path.join(caminho_base, "BD", "PN_Conta_trabalho.xlsx")
+        if os.path.exists(pn_ct_path):
+            db_pn_ct = pd.read_excel(pn_ct_path)
+            # Find columns
+            col_map = {}
+            for col in db_pn_ct.columns:
+                col_upper = str(col).upper().strip()
+                if 'DESENHO' in col_upper:
+                    col_map['DESENHO'] = col
+                elif 'DESTINO' in col_upper:
+                    col_map['DESTINO'] = col
+            
+            if all(k in col_map for k in ['DESENHO', 'DESTINO']):
+                for _, row in db_pn_ct.iterrows():
+                    try:
+                        dest = str(int(float(row[col_map['DESTINO']]))) if pd.notna(row[col_map['DESTINO']]) else ''
+                    except (ValueError, TypeError):
+                        dest = str(row[col_map['DESTINO']]).strip()
+                    
+                    try:
+                        desenho = str(int(float(row[col_map['DESENHO']]))) if pd.notna(row[col_map['DESENHO']]) else ''
+                    except (ValueError, TypeError):
+                        desenho = str(row[col_map['DESENHO']]).strip()
+                    
+                    if dest and desenho:
+                        pn_ct_lookup.add((dest, desenho))
+                print(f"[INPUT_DEMANDA] Loaded {len(pn_ct_lookup)} CT PNs for filtering")
+    except Exception as e:
+        print(f"[WARNING] Could not load PN_Conta_trabalho: {e}")
+    
+    # Helper function to check if a PN should be included based on MOT and CT lookup
+    def should_include_pn(desenho, destino, mot):
+        """
+        Returns True if this PN should be included in the template for the given MOT.
+        - If MOT=CT: include only if (destino, desenho) IS in pn_ct_lookup
+        - If MOT!=CT: include only if (destino, desenho) NOT in pn_ct_lookup
+        """
+        if len(pn_ct_lookup) == 0:
+            return True  # No CT data, include everything
+        
+        # Normalize for lookup
+        try:
+            dest_str = str(int(float(destino))) if pd.notna(destino) else ''
+        except (ValueError, TypeError):
+            dest_str = str(destino).strip()
+        
+        try:
+            des_str = str(int(float(desenho))) if pd.notna(desenho) else ''
+        except (ValueError, TypeError):
+            des_str = str(desenho).strip()
+        
+        key = (dest_str, des_str)
+        is_in_ct = key in pn_ct_lookup
+        mot_upper = str(mot).strip().upper() if pd.notna(mot) else ''
+        
+        if mot_upper == 'CT':
+            return is_in_ct  # CT: include only if in CT lookup
+        else:
+            return not is_in_ct  # FTL/other: include only if NOT in CT lookup
+    
     all_rows = []  # collect all rows here
 
     if use_all_codes:
@@ -205,7 +267,7 @@ def input_demanda(cod_destinos, use_all_codes=False, sheet_name=None, use_manual
         for _, row in df.iterrows():
             cod_forn = str(row["COD FORNECEDOR"]).strip() if pd.notna(row.get("COD FORNECEDOR")) else None
             cod_ims_from_file = str(row.get("COD IMS", "")).strip() if pd.notna(row.get("COD IMS")) else None
-            
+           
 
             matched_cod_forn = cod_forn  # usar o original se não encontrar match
             matched_any = False
@@ -217,35 +279,42 @@ def input_demanda(cod_destinos, use_all_codes=False, sheet_name=None, use_manual
 
                 # Pega o COD IMS do fluxo (pode estar na coluna COD IMS)
                 fluxo_cod_ims = str(linha_fluxo.get("COD IMS", "")).strip() if pd.notna(linha_fluxo.get("COD IMS")) else None
-
+                
+               
                 # Match por COD FORNECEDOR ou por COD IMS
                 match_fornecedor = cod_forn and cod_forn in fornecedor_str
-                match_ims = cod_ims_from_file and fluxo_cod_ims and cod_ims_from_file == fluxo_cod_ims
-
+               
+                
+                match_ims = cod_ims_from_file and fluxo_cod_ims and cod_ims_from_file in fluxo_cod_ims # for partial match
+                
+                # match_ims = cod_ims_from_file and fluxo_cod_ims and cod_ims_from_file == fluxo_cod_ims   #// for exact match
+               
                 if match_fornecedor or match_ims:
                     matched_any = True
                     nome_veiculo = linha_fluxo["VEICULO PRINCIPAL"]
                     codigo = get_vehicle_code(nome_veiculo)
                     tipo = linha_fluxo.get("TIPO SATURACAO", None)
+                    mot = linha_fluxo.get("MOT", None)
                     fluxo_cod_ims_val = linha_fluxo.get("COD IMS", None)
                     cod_dest_full = cods_dest_raw
-
+                    
                     # Se foi match por IMS e arquivo não trazia fornecedor, usa o fornecedor do fluxo
                     matched_fornecedor_to_use = fornecedor_str if (match_ims and not cod_forn) else matched_cod_forn
                     
-                    all_rows.append({
-                        "COD FORNECEDOR": matched_fornecedor_to_use,
-                        "COD IMS": fluxo_cod_ims_val or cod_ims_from_file,
-                        "COD DESTINO": cod_dest_full,
-                        "DESENHO": row["DESENHO"],
-                        "QTDE": row["QTDE"],
-                        "VEICULO": codigo,
-                        "TIPO SATURACAO": tipo,
-                        "STATUS": ""
-                    })
+                    # Filter: only include if PN belongs to this MOT (CT or FTL)
+                    if should_include_pn(row["DESENHO"], cod_dest_full, mot):
+                        all_rows.append({
+                            "COD FORNECEDOR": matched_fornecedor_to_use,
+                            "COD IMS": fluxo_cod_ims_val or cod_ims_from_file,
+                            "COD DESTINO": cod_dest_full,
+                            "DESENHO": row["DESENHO"],
+                            "QTDE": row["QTDE"],
+                            "VEICULO": codigo,
+                            "TIPO SATURACAO": tipo,
+                            "MOT": mot
+                        })
     
-                              
-                   
+                                   
                         
             # If no fluxo match was found for this demand row, still append a row indicating missing fornecedor
             if not matched_any:                
@@ -257,7 +326,7 @@ def input_demanda(cod_destinos, use_all_codes=False, sheet_name=None, use_manual
                     "QTDE": row["QTDE"],
                     "VEICULO": None,
                     "TIPO SATURACAO": None,
-                    "STATUS": "fornecedor não existe no fluxo"
+                    "MOT": None
                 })
     else:
         # ensure cod_destinos is a list of strings
@@ -276,6 +345,7 @@ def input_demanda(cod_destinos, use_all_codes=False, sheet_name=None, use_manual
                 
                 codigo = None
                 tipo = None
+                mot = None
                 cod_ims = None
                 cod_dest_full = cod_dest  # default
                 matched_cod_forn = cod_forn  # usar o original se não encontrar match
@@ -301,6 +371,7 @@ def input_demanda(cod_destinos, use_all_codes=False, sheet_name=None, use_manual
                         nome_veiculo = linha_fluxo["VEICULO PRINCIPAL"]
                         codigo = get_vehicle_code(nome_veiculo)
                         tipo = linha_fluxo.get("TIPO SATURACAO", None)
+                        mot = linha_fluxo.get("MOT", None)
                         cod_ims = linha_fluxo.get("COD IMS", None)
                         cod_dest_full = cods_dest_raw
                         # print(f"match_fornecedor={fornecedor_str}, cod_dest={cod_dest}, cods_dest_raw={cods_dest_raw}, match_cod_dest={match_cod_dest}")
@@ -312,8 +383,8 @@ def input_demanda(cod_destinos, use_all_codes=False, sheet_name=None, use_manual
                         matched = True  # set flag to True on match
                         break
 
-                # Only append if matched
-                if matched:
+                # Only append if matched and PN belongs to this MOT
+                if matched and should_include_pn(row["DESENHO"], cod_dest_full, mot):
                     all_rows.append({
                         "COD FORNECEDOR": matched_cod_forn,
                         "COD IMS": cod_ims or cod_ims_from_file,
@@ -321,7 +392,8 @@ def input_demanda(cod_destinos, use_all_codes=False, sheet_name=None, use_manual
                         "DESENHO": row["DESENHO"],
                         "QTDE": row["QTDE"],
                         "VEICULO": codigo,
-                        "TIPO SATURACAO": tipo
+                        "TIPO SATURACAO": tipo,
+                        "MOT": mot
                     })
 
     df_final = pd.DataFrame(all_rows).drop_duplicates().reset_index(drop=True)
@@ -687,7 +759,6 @@ def atualizar():
             janela.after(0, lambda: finalizar_status(f"Erro: {e}", "red"))
 
     threading.Thread(target=processar, daemon=True).start()
-
 
 
 def start_loading():

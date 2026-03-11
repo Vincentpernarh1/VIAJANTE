@@ -116,7 +116,7 @@ def Processar_Demandas(cod_destino, pasta_demandas="Demandas", sheet_name=None):
                     lista_dfs.append(df_temp)
 
             # --- NOVA LÓGICA PARA PROCESSAR ARQUIVOS EXCEL (.XLS, .XLSX) ---
-            elif nome_arquivo_lower.endswith((".xls", ".xlsx")) and ("saturação" not in nome_arquivo_lower and "saturacao" not in nome_arquivo_lower):
+            elif nome_arquivo_lower.endswith((".xls", ".xlsx")) and ("saturação" not in nome_arquivo_lower and "saturacao" not in nome_arquivo_lower) and not nome_arquivo_lower.startswith("~$"):
                                
                 # Mapeamento dos nomes de coluna do arquivo Excel para os nomes desejados
                 colunas_mapeamento = {
@@ -151,7 +151,7 @@ def Processar_Demandas(cod_destino, pasta_demandas="Demandas", sheet_name=None):
                 # 4. Adiciona o DataFrame processado à lista para concatenação posterior
                 lista_dfs.append(df_temp)
                 
-            elif nome_arquivo_lower.endswith((".xls", ".xlsx")) and ("saturação" in nome_arquivo_lower or "saturacao" in nome_arquivo_lower):
+            elif nome_arquivo_lower.endswith((".xls", ".xlsx")) and ("saturação" in nome_arquivo_lower or "saturacao" in nome_arquivo_lower)  and not nome_arquivo_lower.startswith("~$"):
                                 
                 # Só processa arquivos de saturação se sheet_name foi fornecido
                 if sheet_name is None:
@@ -497,7 +497,7 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
         VEÍCULOS = os.path.join(caminho_base,caminho_BD,"VEÍCULOS.xlsx")
         db_empilhamento = os.path.join(caminho_base,caminho_BD,"BD_EMPILHAMENTO_EMBALAGENS.xlsx")
         db_efi = os.path.join(caminho_base,caminho_BD,"BD_CADASTRO_MDR_PERDA_COMPRIMENTO.xlsx")
-        db_efi = os.path.join(caminho_base,caminho_BD,"BD_CADASTRO_MDR_PERDA_COMPRIMENTO.xlsx")
+        PN_CT_path = os.path.join(caminho_base,caminho_BD,"PN_Conta_trabalho.xlsx")
        
         # ------------------Working in the DB structrue------------------
         db_PN = pd.read_excel(BD_PN, sheet_name='BD', dtype={'CÓD. FORNECEDOR': int, 'DESENHO': str})
@@ -512,6 +512,45 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
         db_empilhamento = db_empilhamento.rename(columns={'CÓD. FORNECEDOR': 'COD FORNECEDOR'})
 
         db_efi = pd.read_excel(db_efi,sheet_name='BD')
+        
+        # --- Load PN_Conta_trabalho for CT validation ---
+        pn_ct_lookup = set()
+        try:
+            if os.path.exists(PN_CT_path):
+                db_pn_ct = pd.read_excel(PN_CT_path)
+                # Normalize column names to find Fornecedor, Desenho, Destino
+                col_map = {}
+                for col in db_pn_ct.columns:
+                    col_upper = str(col).upper().strip()
+                    if 'FORNECEDOR' in col_upper:
+                        col_map['FORNECEDOR'] = col
+                    elif 'DESENHO' in col_upper:
+                        col_map['DESENHO'] = col
+                    elif 'DESTINO' in col_upper:
+                        col_map['DESTINO'] = col
+                
+                # Only need DESENHO and DESTINO columns for CT matching
+                if all(k in col_map for k in ['DESENHO', 'DESTINO']):
+                    for _, row in db_pn_ct.iterrows():
+                        # Normalize to string and remove .0 from floats
+                        # CT matching uses only DESTINO-DESENHO (ignores Fornecedor)
+                        try:
+                            dest = str(int(float(row[col_map['DESTINO']]))) if pd.notna(row[col_map['DESTINO']]) else ''
+                        except (ValueError, TypeError):
+                            dest = str(row[col_map['DESTINO']]).strip()
+                        
+                        try:
+                            desenho = str(int(float(row[col_map['DESENHO']]))) if pd.notna(row[col_map['DESENHO']]) else ''
+                        except (ValueError, TypeError):
+                            desenho = str(row[col_map['DESENHO']]).strip()
+                        
+                        if dest and desenho:
+                            pn_ct_lookup.add((dest, desenho))  # Only (DESTINO, DESENHO)
+                    print(f"[INFO] Loaded {len(pn_ct_lookup)} Destino-Desenho combinations from PN_Conta_trabalho.xlsx")
+                else:
+                    adicionar_erro("PN_Conta_trabalho.xlsx: Colunas esperadas não encontradas", "AVISO")
+        except Exception as e:
+            adicionar_erro(f"Erro ao carregar PN_Conta_trabalho.xlsx: {str(e)}", "AVISO")
 
         # --- Normalização de tipos ---
         db_PN['DESENHO ATUALIZAÇÃO'] = pd.to_datetime(db_PN['DESENHO ATUALIZAÇÃO'], errors='coerce')
@@ -581,9 +620,85 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
         template['PESO TOTAL'] = round(template['PESO MAT'] + template['PESO MDR'], 1)
 
 
+        # Add MOT column if exists in template (from Template.xlsx)
+        if 'MOT' not in template.columns:
+            template['MOT'] = None
+        
         template = template[['COD FORNECEDOR', 'FORNECEDOR', 'COD DESTINO', 'DESENHO', 'QTDE', 'DESCRIÇÃO MATERIAL',
                              'MDR', 'DESCRIÇÃO DA EMBALAGEM', 'QME', 'QTD EMBALAGENS', 'TIPO SATURACAO',
-                             'VEICULO', 'M³', 'PESO MAT', 'PESO MDR', 'PESO TOTAL', 'PESO_MAXIMO']]
+                             'VEICULO', 'MOT', 'M³', 'PESO MAT', 'PESO MDR', 'PESO TOTAL', 'PESO_MAXIMO']]
+        
+        # --- CT Validation: Filter rows based on MOT and PN_Conta_trabalho ---
+        template['INCLUDE_IN_CALC'] = True  # Default: include all
+        
+        if 'MOT' in template.columns and len(pn_ct_lookup) > 0:
+            ct_excluded_count = 0
+            ct_included_count = 0
+            ftl_excluded_count = 0
+            ftl_included_count = 0
+            
+            # Group by (COD FORNECEDOR, COD DESTINO, MOT)
+            for (cod_forn, dest, mot), group in template.groupby(['COD FORNECEDOR', 'COD DESTINO', 'MOT']):
+                mot_upper = str(mot).strip().upper() if pd.notna(mot) else ''
+                
+                if mot_upper == 'CT':
+                    # For CT rows, check if (DESTINO, DESENHO) exists in pn_ct_lookup
+                    # Include only if found in PN_Conta_trabalho
+                    for idx, row in group.iterrows():
+                        # Normalize to match PN_CT format (remove .0 from numbers)
+                        try:
+                            dest_str = str(int(float(dest))) if pd.notna(dest) else ''
+                        except (ValueError, TypeError):
+                            dest_str = str(dest).strip()
+                        
+                        try:
+                            desenho_val = row['DESENHO']
+                            desenho_str = str(int(float(desenho_val))) if pd.notna(desenho_val) else ''
+                        except (ValueError, TypeError):
+                            desenho_str = str(desenho_val).strip() if pd.notna(desenho_val) else ''
+                        
+                        key = (dest_str, desenho_str)  # Only (DESTINO, DESENHO)
+                        
+                        if key not in pn_ct_lookup:
+                            # PN not in CT file, exclude from CT calculation
+                            template.at[idx, 'INCLUDE_IN_CALC'] = False
+                            ct_excluded_count += 1
+                        else:
+                            ct_included_count += 1
+                
+                elif mot_upper in ['FTL', 'LTL'] or mot_upper != 'CT':
+                    # For FTL/LTL/other MOT rows, EXCLUDE if (DESTINO, DESENHO) exists in pn_ct_lookup
+                    # This prevents PNs from appearing in both CT and FTL for same supplier
+                    for idx, row in group.iterrows():
+                        # Normalize to match PN_CT format
+                        try:
+                            dest_str = str(int(float(dest))) if pd.notna(dest) else ''
+                        except (ValueError, TypeError):
+                            dest_str = str(dest).strip()
+                        
+                        try:
+                            desenho_val = row['DESENHO']
+                            desenho_str = str(int(float(desenho_val))) if pd.notna(desenho_val) else ''
+                        except (ValueError, TypeError):
+                            desenho_str = str(desenho_val).strip() if pd.notna(desenho_val) else ''
+                        
+                        key = (dest_str, desenho_str)
+                        
+                        if key in pn_ct_lookup:
+                            # PN is in CT file, so exclude from FTL calculation
+                            template.at[idx, 'INCLUDE_IN_CALC'] = False
+                            ftl_excluded_count += 1
+                        else:
+                            ftl_included_count += 1
+            
+            if ct_excluded_count > 0:
+                adicionar_erro(f"{ct_excluded_count} PN(s) com MOT=CT excluídos (não encontrados em PN_Conta_trabalho)", "INFO")
+            if ct_included_count > 0:
+                adicionar_erro(f"{ct_included_count} PN(s) com MOT=CT incluídos (encontrados em PN_Conta_trabalho)", "INFO")
+            if ftl_excluded_count > 0:
+                adicionar_erro(f"{ftl_excluded_count} PN(s) com MOT!=CT excluídos (encontrados em PN_Conta_trabalho, pertencem ao CT)", "INFO")
+            if ftl_included_count > 0:
+                adicionar_erro(f"{ftl_included_count} PN(s) com MOT!=CT incluídos (não encontrados em PN_Conta_trabalho)", "INFO")
 
         # --- Construção da aba Saturação ---
         df_saturacao = (
@@ -748,12 +863,14 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
         df_saturacao.drop(columns=['CHAVE'], inplace=True)
 
         # --- Criação das variáveis para a tabela final ---
+        # Filter to only include rows that should be in calculations
+        template_calc = template[template['INCLUDE_IN_CALC']] if 'INCLUDE_IN_CALC' in template.columns else template
 
-        ocupacao = template['SAT VOLUME (%)'].sum()
+        ocupacao = template_calc['SAT VOLUME (%)'].sum()
         qtd_veiculos = ceil(ocupacao / 100)
-        volume = template['M³'].sum()
-        peso = template['PESO TOTAL'].sum()
-        embalagens = template['QTD EMBALAGENS'].sum()
+        volume = template_calc['M³'].sum()
+        peso = template_calc['PESO TOTAL'].sum()
+        embalagens = template_calc['QTD EMBALAGENS'].sum()
 
         # Preenche a tree_resumo (que deve ser passada como argumento)
         resumo_dados = [
@@ -801,6 +918,7 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
             'QTD EMBALAGENS': 110,
             'TIPO SATURACAO': 90,
             'VEICULO': 70,
+            'MOT': 60,
             'M³': 60,
             'PESO MAT': 90,
             'PESO MDR': 90,
@@ -808,7 +926,8 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
             'PESO_MAXIMO': 110,
             'SAT VOLUME (%)': 110,
             'SAT PESO (%)': 100,
-            'COD IMS': 90
+            'COD IMS': 90,
+            'INCLUDE_IN_CALC': 110
         }
         
         for col in template.columns:
@@ -1028,13 +1147,15 @@ def consolidar_dados(use_manual=False, manual_veiculo=None):
                         row_codes.update(normalizar_codigos(row['COD IMS']))
                     
                     row_codes.update(normalizar_codigos(row['COD FORNECEDOR']))
-                    
                     return any(f in row_codes for f in fornecedores_comuns)
                 
                 
                 
                 mask_fornecedor = subset_template.apply(row_matches_suppliers, axis=1)
                 
+                # Filter by INCLUDE_IN_CALC to exclude invalid CT PNs
+                if 'INCLUDE_IN_CALC' in subset_template.columns:
+                    mask_fornecedor = mask_fornecedor & subset_template['INCLUDE_IN_CALC']
                 
                 linhas_rota = subset_template[mask_fornecedor]
 
@@ -1051,7 +1172,6 @@ def consolidar_dados(use_manual=False, manual_veiculo=None):
                 nomes_fornecedores['COD FORNECEDOR'] = nomes_fornecedores['COD FORNECEDOR'].astype(str)
                 
                 
-
                 # Get supplier names in order
                 nomes_ordenados = []
                 for f in fornecedores_comuns:
@@ -1096,7 +1216,6 @@ def consolidar_dados(use_manual=False, manual_veiculo=None):
                         veiculo_display = veiculo_final
                         
                         
-                    
                     dados_volume.append({
                         'COD FLUXO': cod_fluxo,
                         'COD DESTINO': cod_dest,
@@ -1118,10 +1237,10 @@ def consolidar_dados(use_manual=False, manual_veiculo=None):
                     })
      
     missing = all_template_suppliers - processed_suppliers
-    print(f"Suppliers in template but not processed: {missing}")
+    # print(f"Suppliers in template but not processed: {missing}")
     
     df_volume = pd.DataFrame(dados_volume)
-    
+    # Do NOT drop_duplicates - CT and FTL routes for same supplier are separate!
     
     df_volume.to_excel('Volume_por_rota.xlsx', index=False)
     
