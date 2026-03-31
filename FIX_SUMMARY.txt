@@ -1,0 +1,52 @@
+"""
+CAPACITY LOOKUP BUG FIX SUMMARY
+================================
+
+PROBLEM FOUND:
+--------------
+MDR 4315 has 150 rows in BD_CADASTRO_MDR with DIFFERENT capacities:
+  • 10 rows with capacity = 14
+  • 131 rows with capacity = 28  ← MOST COMMON
+  •  6 rows with other values (56, 70)
+
+Old code:
+  - Looked up by MDR only (no supplier filter)
+  - Returned FIRST non-NaN value = 14 ❌
+
+Supplier 800014209 has NO specific data for MDR 4315, so falls back to generic lookup.
+
+IMPACT:
+-------
+Using capacity=14 instead of 28:
+  • MDR 4315 saturation: 100 boxes / 14 = 714% (WRONG!)  
+  • Should be: 100 boxes / 28 = 357% (CORRECT)
+  • Difference: 357% excess saturation
+
+Total supplier saturation:
+  • Before fix: 1542.93% (16 trucks)
+  • After fix: ~1185% (12 trucks) - SAVES 4 TRUCKS!  
+
+FIX APPLIED:
+------------
+Modified obter_capacidade_por_linha() in DB.py (~line 886):
+
+1. Try supplier-specific lookup FIRST:
+   filtro = (MDR == mdr) & (COD FORNECEDOR == fornecedor)
+   
+2. If no supplier-specific data, fall back to generic:
+   - Look up all rows with that MDR
+   - Use MODE (most common value) instead of FIRST value
+   - This handles duplicate MDRs with different supplier capacities
+
+EXPECTED RESULT:
+----------------
+After running with the fix:
+  ✅ MDR 4315 capacity: 28 (not 14)
+  ✅ MDR 4315 saturation: ~357% (not 714%)
+  ✅ Total saturation: ~1185% (not 1542%)
+  ✅ Trucks needed: ~12 (not 16)
+
+This should match or be closer to your VBA macro results!
+"""
+
+print(__doc__)
