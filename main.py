@@ -224,7 +224,7 @@ def input_demanda(cod_destinos, use_all_codes=False, sheet_name=None, use_manual
                     
                     if dest and desenho:
                         pn_ct_lookup.add((dest, desenho))
-                print(f"[INPUT_DEMANDA] Loaded {len(pn_ct_lookup)} CT PNs for filtering")
+
     except Exception as e:
         print(f"[WARNING] Could not load PN_Conta_trabalho: {e}")
     
@@ -736,7 +736,8 @@ def atualizar():
             janela.after(0, lambda: finalizar_status("Concluído com sucesso!", "#2e8b57"))
 
         except Exception as e:
-            adicionar_erro(str(e), "AVISO")
+            error_msg = str(e)  # Capture error message before list comprehensions shadow 'e'
+            adicionar_erro(error_msg, "AVISO")
             # Mostra erros/avisos se houver
             erros = obter_erros()
             if erros:
@@ -756,7 +757,7 @@ def atualizar():
                 else:
                     janela.after(0, lambda: show_temporary_message(janela, "Avisos de Processamento", mensagem, kind="info", timeout=10000))
             loading_label.spinning = False
-            janela.after(0, lambda: finalizar_status(f"Erro: {e}", "red"))
+            janela.after(0, lambda msg=error_msg: finalizar_status(f"Erro: {msg}", "red"))
 
     threading.Thread(target=processar, daemon=True).start()
 

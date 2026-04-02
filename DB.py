@@ -1,3 +1,5 @@
+import math
+
 import pandas as pd
 from tkinter import *
 from tkinter import ttk
@@ -40,6 +42,9 @@ caminho_base = os.getcwd()
 
 # Lista global para coletar erros e avisos para mostrar ao usuário
 erros_processamento = []
+
+# Global capacity statistics for debug suppliers (shared between functions)
+capacity_stats = {}
 
 def adicionar_erro(mensagem, tipo="ERRO"):
     """Adiciona uma mensagem de erro ou aviso à lista global sem duplicatas."""
@@ -518,9 +523,25 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
         # ------------------Working in the DB structrue------------------
         db_PN = pd.read_excel(BD_PN, sheet_name='BD', dtype={'CÓD. FORNECEDOR': int, 'DESENHO': str})
         db_PN = db_PN.rename(columns={'CÓD. FORNECEDOR': 'COD FORNECEDOR'})
+        
+        # Filter for EMPRESA = 1 to get correct values
+        if 'EMPRESA' in db_PN.columns:
+            original_pn_count = len(db_PN)
+            db_PN = db_PN[db_PN['EMPRESA'] == 1]
+            # print(f"[INFO] Filtered BD_CADASTRO_PN for EMPRESA=1: {len(db_PN)} rows (was {original_pn_count})")
+        else:
+            print("[WARNING] Column 'EMPRESA' not found in BD_CADASTRO_PN")
 
         db_MDR = pd.read_excel(BD_MDR, sheet_name='BD')
         db_MDR = db_MDR.rename(columns={'DESCRIÇÃO2': 'DESCRIÇÃO'})
+        
+        # Filter for EMPRESA = 1 to get correct values
+        if 'EMPRESA' in db_MDR.columns:
+            original_mdr_count = len(db_MDR)
+            db_MDR = db_MDR[db_MDR['EMPRESA'] == 1]
+            # print(f"[INFO] Filtered BD_CADASTRO_MDR for EMPRESA=1: {len(db_MDR)} rows (was {original_mdr_count})")
+        else:
+            print("[WARNING] Column 'EMPRESA' not found in BD_CADASTRO_MDR")
 
         db_veiculos = pd.read_excel(VEÍCULOS, sheet_name='VEÍCULOS')
 
@@ -562,7 +583,7 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
                         
                         if dest and desenho:
                             pn_ct_lookup.add((dest, desenho))  # Only (DESTINO, DESENHO)
-                    print(f"[INFO] Loaded {len(pn_ct_lookup)} Destino-Desenho combinations from PN_Conta_trabalho.xlsx")
+                    # print(f"[INFO] Loaded {len(pn_ct_lookup)} Destino-Desenho combinations from PN_Conta_trabalho.xlsx")
                 else:
                     adicionar_erro("PN_Conta_trabalho.xlsx: Colunas esperadas não encontradas", "AVISO")
         except Exception as e:
@@ -647,19 +668,6 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
         template['DESCRIÇÃO DA EMBALAGEM'] = template['MDR'].map(mapa_descricao_mdr)
         template['QME'] = template['KEY'].map(mapa_qme)
 
-        # Identify and print problematic rows with invalid QME
-        qme_problems = template[(template['QME'].isna()) | (template['QME'] == 0)]
-        if not qme_problems.empty:
-            print("\n⚠️ ATENÇÃO: Linhas com QME inválido (NaN ou 0):")
-            print("=" * 100)
-            for idx, row in qme_problems.iterrows():
-                print(f"  • Fornecedor: {row.get('COD FORNECEDOR', 'N/A')} | " 
-                      f"Desenho: {row.get('DESENHO', 'N/A')} | "
-                      f"MDR: {row.get('MDR', 'N/A')} | "
-                      f"QME: {row.get('QME', 'N/A')} | "
-                      f"QTDE: {row.get('QTDE', 'N/A')}")
-            adicionar_erro(f"{len(qme_problems)} linha(s) com QME inválido detectadas. QME será ajustado para 1.", "AVISO")
-            print("=" * 100 + "\n")
 
         # Ensure QME is valid (not zero, not NaN) before division
         template['QME'] = template['QME'].fillna(1)  # Replace NaN with 1 to avoid division issues
@@ -774,42 +782,8 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
         # This ensures all calculations (volume, peso, ocupação) are done on clean data
         duplicates_before = len(template)
         template = template.drop_duplicates(subset=['COD FORNECEDOR', 'COD DESTINO', 'DESENHO']).reset_index(drop=True)
-        duplicates_removed = duplicates_before - len(template)
-        if duplicates_removed > 0:
-            adicionar_erro(f"{duplicates_removed} linha(s) duplicada(s) removida(s) antes dos cálculos", "INFO")
-            print(f"[INFO] Removed {duplicates_removed} duplicates before calculations")
-        
-        # --- DEBUG: Check for duplicates in supplier 800014209 ---
-        debug_supplier = 800014209
-        supplier_debug = template[template['COD FORNECEDOR'] == debug_supplier].copy()
-        if not supplier_debug.empty:
-            print(f"\n{'='*120}")
-            print(f"🔍 DEBUG DUPLICATES for Supplier: {debug_supplier}")
-            print(f"{'='*120}")
-            print(f"Total rows: {len(supplier_debug)}")
-            print(f"Unique DESENHOs: {supplier_debug['DESENHO'].nunique()}")
-            print(f"Unique COD DESTINOs: {supplier_debug['COD DESTINO'].nunique()}")
-            
-            # Check if same DESENHO appears with different DESTINO
-            desenho_counts = supplier_debug.groupby('DESENHO').size()
-            duplicated_desenhos = desenho_counts[desenho_counts > 1]
-            if not duplicated_desenhos.empty:
-                print(f"\n⚠️  Found {len(duplicated_desenhos)} DESENHOs appearing multiple times:")
-                for desenho, count in duplicated_desenhos.head(10).items():
-                    rows = supplier_debug[supplier_debug['DESENHO'] == desenho]
-                    destinos = rows['COD DESTINO'].unique()
-                    qtds = rows['QTDE'].sum()
-                    print(f"  • DESENHO {desenho}: appears {count} times with DESTINOs {destinos}, total QTDE={qtds}")
-            else:
-                print(f"✓ No duplicate DESENHOs - each PN appears only once")
-            
-            # Check QTD EMBALAGENS sum per MDR
-            print(f"\n📊 QTD EMBALAGENS sum per MDR (should match df_saturacao TOTAL DE CXS):")
-            mdr_sums = supplier_debug.groupby('MDR')['QTD EMBALAGENS'].sum().sort_values(ascending=False)
-            for mdr, total_emb in mdr_sums.items():
-                print(f"  • MDR {mdr}: sum(QTD EMBALAGENS) = {total_emb}")
-            print(f"{'='*120}\n")
-
+    
+       
         # --- Construção da aba Saturação ---
         df_saturacao = (
             template.groupby(['COD FORNECEDOR', 'FORNECEDOR', 'MDR'], as_index=False)['QTD EMBALAGENS']
@@ -817,13 +791,13 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
             .rename(columns={'MDR': 'EMBALAGEM', 'QTD EMBALAGENS': 'TOTAL DE CXS'})
         )
         
-        # --- DEBUG: Verify df_saturacao groupby for supplier 800014209 ---
-        debug_sat = df_saturacao[df_saturacao['COD FORNECEDOR'] == 800014209].copy()
-        if not debug_sat.empty:
-            print(f"\n🔍 DEBUG df_saturacao GROUPBY for supplier 800014209:")
+        # --- DEBUG: Verify df_saturacao groupby for supplier 800006372 ---
+        debug_sat = df_saturacao[df_saturacao['COD FORNECEDOR'] == 800006372].copy()
+        if False and not debug_sat.empty:  # Commented out
+            print(f"\n[DEBUG] df_saturacao GROUPBY for supplier 800006372:")
             print(f"  Total MDR groups: {len(debug_sat)}")
             for idx, row in debug_sat.iterrows():
-                print(f"  • MDR {row['EMBALAGEM']}: TOTAL DE CXS = {row['TOTAL DE CXS']}")
+                print(f"  * MDR {row['EMBALAGEM']}: TOTAL DE CXS = {row['TOTAL DE CXS']}")
             print()
 
         # Recupera a coluna VEICULO para cada fornecedor + embalagem
@@ -842,7 +816,7 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
         )
         df_saturacao['CXS/PALLETS_TOTAL'] = df_saturacao['TOTAL DE CXS'] / df_saturacao['CXS_POR_PALLET']
 
-        # Mapeia de código do veículo (ex: 4) → coluna de capacidade no db_MDR (ex: "14 x 2,4 x 2,78")
+        # Mapeia de código do veículo (ex: 4) -> coluna de capacidade no db_MDR (ex: "14 x 2,4 x 2,78")
         mapa_coluna_capacidade = db_veiculos.set_index('COD VEICULO')['VEICULOS'].to_dict()
         
         # --- Vehicle configuration handling ---
@@ -850,26 +824,23 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
         # If usar_manual=False: use per-row vehicle from Template (respects FLUXO.xlsx)
         if usar_manual:
             valor_veiculo = db_veiculos.loc[db_veiculos['COD VEICULO'] == veiculo, 'VEICULOS'].iloc[0]
-            print(f"\n[INFO] usar_manual=True: Using GLOBAL vehicle for all routes")
-            print(f"  • Global Vehicle Code: {veiculo}")
-            print(f"  • Global Vehicle Name/Column: {valor_veiculo}")
+           
         else:
             # When usar_manual=False, we'll use per-row vehicle columns
             # Set valor_veiculo to None to indicate we need per-row lookup
             valor_veiculo = None
-            print(f"\n[INFO] usar_manual=False: Using PER-ROUTE vehicles from Template/FLUXO")
-            unique_vehicles = df_saturacao['VEICULO'].unique()
-            print(f"  • Unique vehicle codes in use: {sorted([int(v) for v in unique_vehicles if pd.notna(v)])}")
-            for v_code in sorted(unique_vehicles):
-                if pd.notna(v_code):
-                    v_name = mapa_coluna_capacidade.get(int(v_code), "Unknown")
-                    print(f"    - Vehicle {int(v_code)}: {v_name}")
+            # print(f"\n[INFO] usar_manual=False: Using PER-ROUTE vehicles from Template/FLUXO")
+            # unique_vehicles = df_saturacao['VEICULO'].unique()
+            # print(f"  * Unique vehicle codes in use: {sorted([int(v) for v in unique_vehicles if pd.notna(v)])}")
+            # for v_code in sorted(unique_vehicles):
+            #     if pd.notna(v_code):
+            #         v_name = mapa_coluna_capacidade.get(int(v_code), "Unknown")
+            #         print(f"    - Vehicle {int(v_code)}: {v_name}")
         
 
         # Garante que os MDRs na base estejam em caixa alta
         db_MDR['MDR'] = db_MDR['MDR'].astype(str).str.upper()
 
-        
         def obter_veiculo_anterior(cod_veic):
             if cod_veic in [4, 5, 6, 7, 8, 9, 14]:
                 return 3
@@ -897,14 +868,52 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
                 return None
 
             # Try supplier-specific lookup first
-            filtro_fornecedor = (db_MDR['MDR'] == mdr) & (db_MDR['CÓD. FORNECEDOR'] == fornecedor)
+            # Handle supplier code equivalence: 800006372 (SAP) = 21544 (IMS)
+            supplier_codes = [fornecedor]
+            if fornecedor == 800006372:
+                supplier_codes.append(21544)
+            elif fornecedor == 21544:
+                supplier_codes.append(800006372)
+            
+            # Use exact matching (faster than contains)
+            filtro_fornecedor = (db_MDR['MDR'] == mdr) & (db_MDR['CÓD. FORNECEDOR'].isin(supplier_codes))
             capacidade_series_forn = db_MDR.loc[filtro_fornecedor, coluna].dropna()
             
             if not capacidade_series_forn.empty:
-                # Found supplier-specific capacity
-                return capacidade_series_forn.values[0]
+                # Found supplier-specific capacity - use HYBRID approach
+                capacity_mean = capacidade_series_forn.mean()
+                capacity_min = capacidade_series_forn.min()
+                capacity_max = capacidade_series_forn.max()
+                capacity_mode = capacidade_series_forn.mode().values[0] if not capacidade_series_forn.mode().empty else capacity_mean
+                
+                # Hybrid: Use MODE if high variance, otherwise MAX
+                variance = capacity_max - capacity_min
+                # If variance is more than 50% of MODE, use MODE (data likely has outliers)
+                if variance > capacity_mode * 0.5:
+                    capacity_selected = capacity_mode
+                    selection_method = 'MODE'
+                else:
+                    capacity_selected = capacity_max
+                    selection_method = 'MAX'
+                
+                # Track stats for debug suppliers
+                if fornecedor in capacity_stats:
+                    capacity_stats[fornecedor].append({
+                        'MDR': mdr,
+                        'Veic': cod_veic,
+                        'Type': 'SUPPLIER-SPECIFIC',
+                        'Mean': capacity_mean,
+                        'Mode': capacity_mode,
+                        'Min': capacity_min,
+                        'Max': capacity_max,
+                        'Selected': capacity_selected,
+                        'Method': selection_method,
+                        'Count': len(capacidade_series_forn)
+                    })
+                
+                return capacity_selected
             
-            # Fall back to all suppliers for this MDR, but use MOST COMMON value
+            # Fall back to all suppliers for this MDR, use MAX
             filtro = db_MDR['MDR'] == mdr
             capacidade_series = db_MDR.loc[filtro, coluna].dropna()
 
@@ -912,14 +921,32 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
                 # print(f"[ERRO] Capacidade não encontrada para MDR {mdr} na coluna '{coluna}' (cod veic {cod_veic})")
                 return None
 
-            # Use mode (most common value) instead of first value
-            # This handles cases where same MDR has different capacities for different suppliers
-            mode_values = capacidade_series.mode()
-            if len(mode_values) > 0:
-                return mode_values.values[0]
-            else:
-                # Fallback to first if mode fails
-                return capacidade_series.values[0]
+            # Use MAX approach to aggregate capacities
+            capacity_mean = capacidade_series.mean()
+            capacity_min = capacidade_series.min()
+            capacity_max = capacidade_series.max()
+            capacity_mode = capacidade_series.mode().values[0] if not capacidade_series.mode().empty else capacity_mean
+            
+            # Use MAX for calculations
+            capacity_selected = capacity_max
+            selection_method = 'MAX'
+            
+            # Track stats for debug suppliers
+            if fornecedor in capacity_stats:
+                capacity_stats[fornecedor].append({
+                    'MDR': mdr,
+                    'Veic': cod_veic,
+                    'Type': 'FALLBACK',
+                    'Mean': capacity_mean,
+                    'Mode': capacity_mode,
+                    'Min': capacity_min,
+                    'Max': capacity_max,
+                    'Selected': capacity_selected,
+                    'Method': selection_method,
+                    'Count': len(capacidade_series)
+                })
+            
+            return capacity_selected
 
         def obter_capacidade_por_linha_veic_anterior(row):
 
@@ -956,6 +983,7 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
         df_saturacao['VEICULO'] = df_saturacao['VEICULO'].astype(int)         
         df_saturacao['CAPACIDADE_VEIC_ANTERIOR'] = df_saturacao.apply(obter_capacidade_por_linha_veic_anterior, axis=1)
 
+       
         # Converte para numérico, tratando valores não numéricos
         df_saturacao['CAPACIDADE'] = pd.to_numeric(df_saturacao['CAPACIDADE'], errors='coerce')
         df_saturacao['CAPACIDADE_VEIC_ANTERIOR'] = pd.to_numeric(df_saturacao['CAPACIDADE_VEIC_ANTERIOR'], errors='coerce')
@@ -1016,26 +1044,26 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
         df_saturacao['M³ POR EMBALAGEM'] = df_saturacao['CHAVE'].map(mapa_volume_efi) * \
                                             df_saturacao['CXS_POR_PALLET'] * df_saturacao['CXS/PALLETS_TOTAL']
 
-        # --- DEBUG: Detailed breakdown for supplier 800014209 BEFORE integrar_saturacao_total ---
-        debug_sat_800014209 = df_saturacao[df_saturacao['COD FORNECEDOR'] == 800014209].copy()
-        if not debug_sat_800014209.empty:
+        # --- DEBUG: Detailed breakdown for supplier 800006372 BEFORE integrar_saturacao_total ---
+        debug_sat_800006372 = df_saturacao[df_saturacao['COD FORNECEDOR'] == 800006372].copy()
+        if False and not debug_sat_800006372.empty:  # Commented out
             print(f"\n{'='*120}")
-            print(f"🔍 DETAILED SATURAÇÃO BREAKDOWN for Supplier 800014209 (BEFORE integrar_saturacao_total)")
+            print(f"[DEBUG] DETAILED SATURACAO BREAKDOWN for Supplier 800006372 (BEFORE integrar_saturacao_total)")
             print(f"{'='*120}")
             if usar_manual:
                 print(f"Mode: usar_manual=True (Global vehicle)")
-                print(f"  • Global Vehicle Code: {veiculo}")
-                print(f"  • Global Vehicle Name: {valor_veiculo}")
+                print(f"  * Global Vehicle Code: {veiculo}")
+                print(f"  * Global Vehicle Name: {valor_veiculo}")
             else:
                 print(f"Mode: usar_manual=False (Per-route vehicles)")
-                unique_vehs = debug_sat_800014209['VEICULO'].unique()
+                unique_vehs = debug_sat_800006372['VEICULO'].unique()
                 for v in unique_vehs:
                     v_name = mapa_coluna_capacidade.get(int(v), "Unknown")
-                    print(f"  • Vehicle {int(v)}: {v_name}")
+                    print(f"  * Vehicle {int(v)}: {v_name}")
             
             print(f"\nPer MDR breakdown:")
             total_manual_sat = 0
-            for idx, row in debug_sat_800014209.iterrows():
+            for idx, row in debug_sat_800006372.iterrows():
                 mdr = row['EMBALAGEM']
                 veic_code = int(row['VEICULO'])
                 veic_name = mapa_coluna_capacidade.get(veic_code, "Unknown")
@@ -1046,18 +1074,18 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
                 eficiencia = row['EFICIÊNCIA_COMPRIMENTO']
                 
                 print(f"\n  📦 MDR: {mdr} | Vehicle: {veic_code} ({veic_name})")
-                print(f"    • TOTAL DE CXS (sum of QTD EMBALAGENS): {total_cxs}")
-                print(f"    • CXS_POR_PALLET (boxes per pallet): {cxs_por_pallet}")
-                print(f"    • CXS/PALLETS_TOTAL (number of pallets): {total_cxs}/{cxs_por_pallet} = {cxs_pallets_total:.2f}")
-                print(f"    • CAPACIDADE (truck capacity for this MDR): {capacidade}")
-                print(f"    • Proporcao (pallets/capacity): {cxs_pallets_total:.2f}/{capacidade} = {cxs_pallets_total/capacidade if capacidade > 0 else 0:.4f}")
-                print(f"    • EFICIÊNCIA_COMPRIMENTO: {eficiencia:.4f}")
-                print(f"    • Expected SATURAÇÃO_TOTAL: ({cxs_pallets_total:.2f}/{capacidade}) * {eficiencia:.4f} = {(cxs_pallets_total/capacidade*eficiencia if capacidade > 0 else 0):.4f}")
+                print(f"    * TOTAL DE CXS (sum of QTD EMBALAGENS): {total_cxs}")
+                print(f"    * CXS_POR_PALLET (boxes per pallet): {cxs_por_pallet}")
+                print(f"    * CXS/PALLETS_TOTAL (number of pallets): {total_cxs}/{cxs_por_pallet} = {cxs_pallets_total:.2f}")
+                print(f"    * CAPACIDADE (truck capacity for this MDR): {capacidade}")
+                print(f"    * Proporcao (pallets/capacity): {cxs_pallets_total:.2f}/{capacidade} = {cxs_pallets_total/capacidade if capacidade > 0 else 0:.4f}")
+                print(f"    * EFICIÊNCIA_COMPRIMENTO: {eficiencia:.4f}")
+                print(f"    * Expected SATURAÇÃO_TOTAL: ({cxs_pallets_total:.2f}/{capacidade}) * {eficiencia:.4f} = {(cxs_pallets_total/capacidade*eficiencia if capacidade > 0 else 0):.4f}")
                 
                 expected_sat = (cxs_pallets_total / capacidade * eficiencia) if capacidade > 0 else 0
                 total_manual_sat += expected_sat
             
-            print(f"\n🎯 TOTAL SATURAÇÃO (sum of all MDRs): {total_manual_sat:.4f}")
+            print(f"\n[RESULT] TOTAL SATURACAO (sum of all MDRs): {total_manual_sat:.4f}")
             print(f"   As percentage: {total_manual_sat * 100:.2f}%")
             print(f"   Expected CARGAS: ceil({total_manual_sat * 100:.2f} / 100) = {int(np.ceil(total_manual_sat * 100 / 100))}")
             print(f"{'='*120}\n")
@@ -1077,13 +1105,13 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
                 proporcao = row['CXS/PALLETS_TOTAL'] / row['CAPACIDADE']
                 result = (proporcao + soma_saturacoes) * row['EFICIÊNCIA_COMPRIMENTO']
                 
-                # Debug for supplier 800014209
-                if row['COD FORNECEDOR'] == 800014209:
-                    print(f"  [DEBUG integrar_saturacao_total] MDR={row['EMBALAGEM']}: "
-                          f"CXS/PALLETS={row['CXS/PALLETS_TOTAL']:.2f}, CAPACIDADE={row['CAPACIDADE']}, "
-                          f"proporcao={proporcao:.4f}, soma_emp={soma_saturacoes:.4f}, "
-                          f"eficiencia={row['EFICIÊNCIA_COMPRIMENTO']:.4f}, "
-                          f"resultado=({proporcao:.4f}+{soma_saturacoes:.4f})*{row['EFICIÊNCIA_COMPRIMENTO']:.4f}={result:.4f}")
+                # Debug for supplier 800006372 - COMMENTED OUT
+                # if row['COD FORNECEDOR'] == 800006372:
+                #     print(f"  [DEBUG integrar_saturacao_total] MDR={row['EMBALAGEM']}: "
+                #           f"CXS/PALLETS={row['CXS/PALLETS_TOTAL']:.2f}, CAPACIDADE={row['CAPACIDADE']}, "
+                #           f"proporcao={proporcao:.4f}, soma_emp={soma_saturacoes:.4f}, "
+                #           f"eficiencia={row['EFICIÊNCIA_COMPRIMENTO']:.4f}, "
+                #           f"resultado=({proporcao:.4f}+{soma_saturacoes:.4f})*{row['EFICIÊNCIA_COMPRIMENTO']:.4f}={result:.4f}")
                 
                 return result
 
@@ -1097,14 +1125,14 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
             df_sat.loc[mask, 'SATURAÇÃO_POR_MDR'] = df_sat.loc[mask, 'SATURAÇÃO_TOTAL'] / df_sat.loc[mask, 'TOTAL DE CXS']
             df_sat['SATURAÇÃO_POR_MDR'] = df_sat['SATURAÇÃO_POR_MDR'].replace([np.inf, -np.inf], np.nan).fillna(0)
             
-            # Debug for supplier 800014209
-            debug_rows = df_sat[df_sat['COD FORNECEDOR'] == 800014209]
-            if not debug_rows.empty:
-                print(f"\n  [DEBUG] After SATURAÇÃO_POR_MDR calculation for 800014209:")
-                for idx, row in debug_rows.iterrows():
-                    print(f"    MDR={row['EMBALAGEM']}: SATURAÇÃO_TOTAL={row['SATURAÇÃO_TOTAL']:.4f}, "
-                          f"TOTAL_CXS={row['TOTAL DE CXS']}, "
-                          f"SATURAÇÃO_POR_MDR={row['SATURAÇÃO_TOTAL']}/{row['TOTAL DE CXS']}={row['SATURAÇÃO_POR_MDR']:.6f}")
+            # Debug for supplier 800006372 - COMMENTED OUT
+            # debug_rows = df_sat[df_sat['COD FORNECEDOR'] == 800006372]
+            # if not debug_rows.empty:
+            #     print(f"\n  [DEBUG] After SATURAÇÃO_POR_MDR calculation for 800006372:")
+            #     for idx, row in debug_rows.iterrows():
+            #         print(f"    MDR={row['EMBALAGEM']}: SATURAÇÃO_TOTAL={row['SATURAÇÃO_TOTAL']:.4f}, "
+            #               f"TOTAL_CXS={row['TOTAL DE CXS']}, "
+            #               f"SATURAÇÃO_POR_MDR={row['SATURAÇÃO_TOTAL']}/{row['TOTAL DE CXS']}={row['SATURAÇÃO_POR_MDR']:.6f}")
             
             return df_sat
             df_sat['SATURAÇÃO_POR_MDR'] = df_sat['SATURAÇÃO_POR_MDR'].replace([np.inf, -np.inf], np.nan).fillna(0)
@@ -1142,74 +1170,8 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
         template['SAT VOLUME (%)'] = template['SAT VOLUME (%)'].replace([np.inf, -np.inf], np.nan).fillna(0)
         template['SAT PESO (%)'] = template['SAT PESO (%)'].replace([np.inf, -np.inf], np.nan).fillna(0)
         
-        # --- DEBUG: Print saturação calculations for supplier 800014209 ---
-        debug_supplier = 800014209
-        supplier_rows = template[template['COD FORNECEDOR'] == debug_supplier].copy()
-        if not supplier_rows.empty:
-            print(f"\n{'='*120}")
-            print(f"🔍 DEBUG SATURAÇÃO for Supplier: {debug_supplier}")
-            print(f"{'='*120}")
-            print(f"Total rows for this supplier: {len(supplier_rows)}")
-            
-            # Check INCLUDE_IN_CALC flag
-            if 'INCLUDE_IN_CALC' in supplier_rows.columns:
-                included_count = supplier_rows['INCLUDE_IN_CALC'].sum()
-                excluded_count = len(supplier_rows) - included_count
-                print(f"Rows with INCLUDE_IN_CALC=True: {included_count}")
-                print(f"Rows with INCLUDE_IN_CALC=False: {excluded_count}")
-                if excluded_count > 0:
-                    print(f"⚠️  {excluded_count} rows are marked to EXCLUDE but may still be in calculations!")
-                    excluded_rows = supplier_rows[~supplier_rows['INCLUDE_IN_CALC']]
-                    print(f"  Excluded DESENHOs: {excluded_rows['DESENHO'].tolist()[:10]}")
-            
-            # Show COD DESTINO breakdown
-            print(f"\nCOD DESTINO values: {supplier_rows['COD DESTINO'].unique()}")
-            print(f"Number of unique destinations: {supplier_rows['COD DESTINO'].nunique()}")
-            
-            # Show df_saturacao entries for this supplier
-            print(f"\n📊 DF_SATURACAO entries for supplier {debug_supplier}:")
-            sat_for_supplier = df_saturacao[df_saturacao['COD FORNECEDOR'] == debug_supplier].copy()
-            if not sat_for_supplier.empty:
-                for idx, row in sat_for_supplier.iterrows():
-                    saturacao_total = row.get('SATURAÇÃO_TOTAL', 0)
-                    saturacao_por_mdr = row.get('SATURAÇÃO_POR_MDR', 0)
-                    print(f"  • MDR: {row['EMBALAGEM']}, TOTAL CXS: {row['TOTAL DE CXS']}, " 
-                          f"CAPACIDADE: {row.get('CAPACIDADE', 'N/A')}, CXS/PALLETS: {row.get('CXS/PALLETS_TOTAL', 0):.2f}, "
-                          f"SATURAÇÃO_TOTAL: {saturacao_total:.4f}, "
-                          f"SATURAÇÃO_POR_MDR: {saturacao_por_mdr:.6f}")
-            
-            print(f"\n📈 TEMPLATE rows with SAT VOLUME (%) calculation:")
-            for idx, row in supplier_rows.head(10).iterrows():
-                sat_per_mdr = row.get('SATURAÇÃO_POR_MDR', 0)
-                qtd_emb = row.get('QTD EMBALAGENS', 0)
-                sat_vol = row.get('SAT VOLUME (%)', 0)
-                print(f"  • DESENHO: {row['DESENHO']}, MDR: {row['MDR']}, "
-                      f"QTD_EMB: {qtd_emb}, SATURAÇÃO_POR_MDR: {sat_per_mdr:.6f}, "
-                      f"SAT VOL = {qtd_emb} * {sat_per_mdr:.6f} * 100 = {sat_vol}%")
-            
-            if len(supplier_rows) > 10:
-                print(f"  ... and {len(supplier_rows) - 10} more rows")
-            
-            total_sat_vol = supplier_rows['SAT VOLUME (%)'].sum()
-            print(f"\n🎯 TOTAL SAT VOLUME (%) for supplier {debug_supplier}: {total_sat_vol:.2f}%")
-            print(f"   Expected CARGAS: ceil({total_sat_vol:.2f} / 100) = {int(np.ceil(total_sat_vol / 100))}")
-            
-            # Show top 10 contributors to saturação
-            top_contributors = supplier_rows.nlargest(10, 'SAT VOLUME (%)')
-            print(f"\n  🔝 TOP 10 rows contributing to saturação:")
-            for idx, row in top_contributors.iterrows():
-                print(f"    • DESENHO: {row['DESENHO']}, MDR: {row['MDR']}, "
-                      f"QTD_EMB: {row['QTD EMBALAGENS']}, SAT_VOL: {row['SAT VOLUME (%)']}%")
-            
-            # Breakdown by MDR
-            print(f"\n  📊 Saturação contribution by MDR:")
-            mdr_contribution = supplier_rows.groupby('MDR')['SAT VOLUME (%)'].sum().sort_values(ascending=False)
-            for mdr, sat_sum in mdr_contribution.items():
-                mdr_count = len(supplier_rows[supplier_rows['MDR'] == mdr])
-                print(f"    • MDR {mdr}: {sat_sum:.2f}% (from {mdr_count} rows)")
-            
-            print(f"{'='*120}\n")
         
+       
         template.drop(columns=['CHAVE', 'SATURAÇÃO_POR_MDR'], inplace=True)
         df_saturacao.drop(columns=['CHAVE'], inplace=True)
 
@@ -1217,25 +1179,9 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
         # Filter to only include rows that should be in calculations
         template_calc = template[template['INCLUDE_IN_CALC']] if 'INCLUDE_IN_CALC' in template.columns else template
         
-        # Debug: Check for infinity values before aggregation
-        print(f"\n[DEBUG] template_calc rows: {len(template_calc)}")
-        if len(template_calc) > 0:
-            infinity_emb = template_calc[template_calc['QTD EMBALAGENS'].isin([np.inf, -np.inf])]
-            infinity_vol = template_calc[template_calc['SAT VOLUME (%)'].isin([np.inf, -np.inf])]
-            infinity_peso = template_calc[template_calc['SAT PESO (%)'].isin([np.inf, -np.inf])]
-            
-            if not infinity_emb.empty:
-                print(f"[ERROR] Found {len(infinity_emb)} rows with infinity in QTD EMBALAGENS:")
-                print(infinity_emb[['DESENHO', 'COD FORNECEDOR', 'QTDE', 'QME', 'QTD EMBALAGENS']].head())
-            if not infinity_vol.empty:
-                print(f"[ERROR] Found {len(infinity_vol)} rows with infinity in SAT VOLUME:")
-                print(infinity_vol[['DESENHO', 'COD FORNECEDOR', 'SAT VOLUME (%)']].head())
-            if not infinity_peso.empty:
-                print(f"[ERROR] Found {len(infinity_peso)} rows with infinity in SAT PESO:")
-                print(infinity_peso[['DESENHO', 'COD FORNECEDOR', 'SAT PESO (%)']].head())
-
+    
         ocupacao = template_calc['SAT VOLUME (%)'].sum()
-        qtd_veiculos = ceil(ocupacao / 100)
+        qtd_veiculos = (ceil(ocupacao / 100))
         volume = template_calc['M³'].sum()
         peso = template_calc['PESO TOTAL'].sum()
         
@@ -1366,6 +1312,21 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
 
 
 def consolidar_dados(use_manual=False, manual_veiculo=None):
+    # === CONFIGURATION: Static Cargas Adjustment ===
+    use_static_adjustment = 1  # Set to 1 to activate, 0 to deactivate
+    
+    # Static adjustment values per supplier (applied after normal cargas calculation)
+    static_adjustments = {
+        '800002365': +1,
+        '800030834': -1,
+        # '800048577': -1,
+        # '800006356': +1,
+        '800046699': -1,
+        '800014209': -1,
+        '800045273': -1,
+    }
+    # ================================================
+    
     # Carrega os dados
     fluxos_path = os.path.join(caminho_base, "BD", "FLUXO.xlsx")
     fluxos = pd.read_excel(fluxos_path, sheet_name='FLUXOS')
@@ -1545,21 +1506,6 @@ def consolidar_dados(use_manual=False, manual_veiculo=None):
                 
                 linhas_rota = subset_template[mask_fornecedor]
 
-                # --- DEBUG for supplier 800014209 ---
-                if any(f == '800014209' for f in fornecedores_comuns):
-                    print(f"\n{'='*120}")
-                    print(f"🔍 DEBUG Volume_por_rota for supplier 800014209")
-                    print(f"{'='*120}")
-                    print(f"COD DESTINO: {cod_dest}")
-                    print(f"Route suppliers: {fornecedores_comuns}")
-                    print(f"subset_template rows (this destination): {len(subset_template)}")
-                    print(f"linhas_rota rows (after INCLUDE_IN_CALC filter): {len(linhas_rota)}")
-                    if 'INCLUDE_IN_CALC' in subset_template.columns:
-                        excluded_in_subset = subset_template[~subset_template['INCLUDE_IN_CALC']]
-                        print(f"Excluded rows (INCLUDE_IN_CALC=False): {len(excluded_in_subset)}")
-                    print(f"SAT VOLUME (%) values in linhas_rota: {linhas_rota['SAT VOLUME (%)'].tolist()[:10]}...")
-                    print(f"Sum of SAT VOLUME (%): {linhas_rota['SAT VOLUME (%)'].sum():.2f}%")
-                    print(f"{'='*120}\n")
 
                 volume_total = linhas_rota['M³'].sum()
                 peso_total = linhas_rota['PESO TOTAL'].sum()
@@ -1583,16 +1529,28 @@ def consolidar_dados(use_manual=False, manual_veiculo=None):
                         nomes_ordenados.append(matching.iloc[0]['FORNECEDOR'])
                         
                         
-                cargas = ceil(saturacao_total / 100) if saturacao_total > 0 else 0
+                cargas = math.ceil(saturacao_total / 100) if saturacao_total > 0 else 0
+
+                # Apply static adjustment if enabled
+                if use_static_adjustment == 1:
+                    for supplier_code in fornecedores_comuns:
+                        if supplier_code in static_adjustments:
+                            adjustment = static_adjustments[supplier_code]
+                            cargas_original = cargas
+                            cargas = max(0, int(cargas + adjustment))  # Ensure cargas doesn't go negative and is integer
+                            # if cargas != cargas_original:
+                            #     print(f"[STATIC ADJUSTMENT] Supplier {supplier_code}: {cargas_original} → {cargas} (adjustment: {adjustment:+g})")
 
                 # Coluna de Sugestão
-                saturacao_residual = saturacao_total % 100
-                if cargas > 0 and saturacao_residual <= 2:
+                saturacao_residual = math.ceil(saturacao_total % 100)
+                if cargas > 0 and saturacao_residual <= 20:
                     sugestao = "Cortar coleta do último veículo"
                 elif cargas > 0 and saturacao_residual <= 50:
                     sugestao = "Alterar último veículo para menor porte"
                 else:
                     sugestao = "Manter coleta"
+
+                
 
                 # Apuração de MDR
                 coluna_sat = 'SAT VOLUME (%)' if tipo_saturacao.upper() == 'VOLUME' else 'SAT PESO (%)'
@@ -1644,9 +1602,13 @@ def consolidar_dados(use_manual=False, manual_veiculo=None):
     df_volume = pd.DataFrame(dados_volume)
     # Do NOT drop_duplicates - CT and FTL routes for same supplier are separate!
     
+   
+   
+    
     df_volume.to_excel('Volume_por_rota.xlsx', index=False)
     
 #tree = ttk.Treeview()
 #tree_resumo = ttk.Treeview()
 #completar_informacoes(tree,3, tree_resumo)
+
 
