@@ -61,10 +61,46 @@ def limpar_erros():
 def obter_erros():
     """Retorna a lista de erros acumulados"""
     return erros_processamento.copy()
+
+
+def normalize_sheet_name(desired_name, available_sheets):
+    """
+    Finds a matching sheet name from available_sheets that matches desired_name,
+    ignoring case and accents.
+    
+    Args:
+        desired_name: The sheet name we want (e.g., 'Sábado', 'Geral', 'Domingo')
+        available_sheets: List of actual sheet names in the Excel file
+    
+    Returns:
+        The actual sheet name from the file that matches, or None if no match found
+    """
+    if desired_name is None or not available_sheets:
+        return None
+    
+    def remove_accents(text):
+        """Remove accents from text"""
+        if text is None:
+            return ''
+        text = str(text)
+        # Normalize to NFD (decomposed form) and filter out combining characters
+        nfd = unicodedata.normalize('NFD', text)
+        return ''.join(char for char in nfd if unicodedata.category(char) != 'Mn')
+    
+    # Normalize the desired name (remove accents, convert to upper)
+    desired_normalized = remove_accents(desired_name).upper().strip()
+    
+    # Try to find a match
+    for sheet in available_sheets:
+        sheet_normalized = remove_accents(str(sheet)).upper().strip()
+        if sheet_normalized == desired_normalized:
+            return sheet  # Return the actual sheet name from the file
+    
+    return None  # No match found
     
 
 def Processar_Demandas(cod_destino, pasta_demandas="Demandas", sheet_name=None):
-   
+    
     # Define o caminho completo para a pasta de demandas
     caminho_pasta = os.path.join(caminho_base, pasta_demandas)
 
@@ -102,6 +138,9 @@ def Processar_Demandas(cod_destino, pasta_demandas="Demandas", sheet_name=None):
                             desenho = linha[3:14]
                             cod_fornecedor = linha[-20:-11]
                             quantidade = linha[-11:].replace("+", "")
+                            
+                            if cod_fornecedor in '800036730' :
+                                print(f"DEBUG: Extraído do arquivo '{nome_arquivo}': DESENHO='{desenho}', COD FORNECEDOR='{cod_fornecedor}', QTDE='{int(quantidade)}'")
 
                             # Adiciona os dados extraídos à lista deste arquivo
                             dados_arquivo_atual.append({
@@ -166,19 +205,25 @@ def Processar_Demandas(cod_destino, pasta_demandas="Demandas", sheet_name=None):
                 # Debug: mostra informações do arquivo Excel
                 try:
                     xl_file = pd.ExcelFile(caminho_completo_arquivo)
-                                 
+                    
+                    # Normaliza o nome da sheet para encontrar correspondência
+                    actual_sheet_name = normalize_sheet_name(sheet_name, xl_file.sheet_names)
+                    
                     # Verifica se a sheet existe
-                    if sheet_name not in xl_file.sheet_names:
+                    if actual_sheet_name is None:
                         adicionar_erro(f"Arquivo '{nome_arquivo}': Sheet '{sheet_name}' não encontrada. Disponíveis: {', '.join(xl_file.sheet_names)}", "ERRO")
                         continue
                     
+                    # Log the match if different
+                    if actual_sheet_name != sheet_name:
+                        print(f"INFO: Sheet '{sheet_name}' matched to '{actual_sheet_name}' in '{nome_arquivo}'")
                     
                 except Exception as e:
                     print(f"Erro ao ler sheets do arquivo '{nome_arquivo}': {e}")
                     continue
                 
                 # Lê o arquivo Excel de saturação da sheet específica com header na linha 3 (índice 2)
-                df_excel = pd.read_excel(caminho_completo_arquivo, sheet_name=sheet_name, header=2)
+                df_excel = pd.read_excel(caminho_completo_arquivo, sheet_name=actual_sheet_name, header=2)
                 
                 colunas_saturacao_mapeamento = {}
                 
@@ -524,22 +569,63 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
         db_PN = pd.read_excel(BD_PN, sheet_name='BD', dtype={'CÓD. FORNECEDOR': int, 'DESENHO': str})
         db_PN = db_PN.rename(columns={'CÓD. FORNECEDOR': 'COD FORNECEDOR'})
         
-        # Filter for EMPRESA = 1 to get correct values
+        # DEBUG: Check IMS code 47850 BEFORE EMPRESA filter
+        debug_ims_code = 47850
+        if debug_ims_code in db_PN['COD FORNECEDOR'].values:
+            debug_rows = db_PN[db_PN['COD FORNECEDOR'] == debug_ims_code]
+            print(f"\n[DEBUG BEFORE FILTER] IMS Code {debug_ims_code} found in db_PN:")
+            print(f"  - Count: {len(debug_rows)} rows")
+            if 'EMPRESA' in db_PN.columns:
+                empresas = debug_rows['EMPRESA'].unique()
+                print(f"  - EMPRESA values: {empresas}")
+            if 'FORNECEDOR' in db_PN.columns:
+                fornecedores = debug_rows['FORNECEDOR'].unique()
+                print(f"  - FORNECEDOR names: {fornecedores}")
+        else:
+            print(f"\n[DEBUG BEFORE FILTER] IMS Code {debug_ims_code} NOT found in db_PN")
+        
+        # Check all short COD FORNECEDOR codes (< 1000000)
+        short_codes = db_PN[db_PN['COD FORNECEDOR'] < 1000000]
+        if not short_codes.empty:
+            print(f"\n[DEBUG] Found {len(short_codes)} entries with COD FORNECEDOR < 1000000 (likely IMS codes)")
+            if 'EMPRESA' in db_PN.columns:
+                empresa_dist = short_codes['EMPRESA'].value_counts()
+                print(f"  - EMPRESA distribution for short codes:")
+                for emp, count in empresa_dist.items():
+                    print(f"    EMPRESA {emp}: {count} rows")
+        
+        # Filter for EMPRESA = 1, 10, or 12 to get correct values
         if 'EMPRESA' in db_PN.columns:
             original_pn_count = len(db_PN)
-            db_PN = db_PN[db_PN['EMPRESA'] == 1]
-            # print(f"[INFO] Filtered BD_CADASTRO_PN for EMPRESA=1: {len(db_PN)} rows (was {original_pn_count})")
+            db_PN = db_PN[db_PN['EMPRESA'].isin([1, 10, 12])]
+            print(f"\n[INFO] Filtered BD_CADASTRO_PN for EMPRESA in [1,10,12]: {len(db_PN)} rows (was {original_pn_count})")
+            
+            # DEBUG: Check IMS code 47850 AFTER EMPRESA filter
+            if debug_ims_code in db_PN['COD FORNECEDOR'].values:
+                debug_rows = db_PN[db_PN['COD FORNECEDOR'] == debug_ims_code]
+                print(f"\n[DEBUG AFTER FILTER] IMS Code {debug_ims_code} STILL EXISTS in db_PN:")
+                print(f"  - Count: {len(debug_rows)} rows")
+            else:
+                print(f"\n[DEBUG AFTER FILTER] ⚠️ IMS Code {debug_ims_code} WAS REMOVED by EMPRESA filter!")
+                print(f"  - This explains why mapping fails for this code")
+            
+            # Check remaining short codes after filter
+            short_codes_after = db_PN[db_PN['COD FORNECEDOR'] < 1000000]
+            removed_count = len(short_codes) - len(short_codes_after)
+            if removed_count > 0:
+                print(f"\n[DEBUG] ⚠️ EMPRESA filter removed {removed_count} short code entries (IMS codes)")
+                print(f"  - Remaining short codes: {len(short_codes_after)}")
         else:
             print("[WARNING] Column 'EMPRESA' not found in BD_CADASTRO_PN")
 
         db_MDR = pd.read_excel(BD_MDR, sheet_name='BD')
         db_MDR = db_MDR.rename(columns={'DESCRIÇÃO2': 'DESCRIÇÃO'})
         
-        # Filter for EMPRESA = 1 to get correct values
+        # Filter for EMPRESA = 1, 10, or 12 to get correct values
         if 'EMPRESA' in db_MDR.columns:
             original_mdr_count = len(db_MDR)
-            db_MDR = db_MDR[db_MDR['EMPRESA'] == 1]
-            # print(f"[INFO] Filtered BD_CADASTRO_MDR for EMPRESA=1: {len(db_MDR)} rows (was {original_mdr_count})")
+            db_MDR = db_MDR[db_MDR['EMPRESA'].isin([1, 10, 12])]
+            # print(f"[INFO] Filtered BD_CADASTRO_MDR for EMPRESA in [1,10,12]: {len(db_MDR)} rows (was {original_mdr_count})")
         else:
             print("[WARNING] Column 'EMPRESA' not found in BD_CADASTRO_MDR")
 
@@ -605,6 +691,23 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
         # --- Mapeamentos únicos para .map() seguros ---
         # Filter out nan values and keep most recent entries for db_PN mappings
         mapa_fornecedores = db_PN.drop_duplicates('COD FORNECEDOR').set_index('COD FORNECEDOR')['FORNECEDOR']
+        
+        # DEBUG: Check what's in mapa_fornecedores for short codes
+        debug_ims_code = 47850
+        if debug_ims_code in mapa_fornecedores.index:
+            print(f"\n[DEBUG MAPPING] IMS Code {debug_ims_code} EXISTS in mapa_fornecedores")
+            print(f"  - Maps to: '{mapa_fornecedores[debug_ims_code]}'")
+        else:
+            print(f"\n[DEBUG MAPPING] ⚠️ IMS Code {debug_ims_code} NOT in mapa_fornecedores")
+            print(f"  - This will cause mapping to fail for this code")
+        
+        # Show all short codes in the mapping
+        short_codes_in_map = [k for k in mapa_fornecedores.index if k < 1000000]
+        if short_codes_in_map:
+            print(f"\n[DEBUG MAPPING] Short codes (< 1000000) available in mapa_fornecedores: {len(short_codes_in_map)}")
+            print(f"  - Sample codes: {short_codes_in_map[:10]}")
+        else:
+            print(f"\n[DEBUG MAPPING] ⚠️ NO short codes in mapa_fornecedores!")
 
         # Mapas baseados na chave composta - already sorted by DESENHO ATUALIZAÇÃO descending
         # This ensures we always get the most recent non-null values
@@ -653,7 +756,36 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
 
        
         template['MAP_KEY'] = pd.to_numeric(template['MAP_KEY'], errors='coerce')
+        
+        # DEBUG: Check MAP_KEY values for short codes
+        debug_ims_code = 47850
+        if debug_ims_code in template['MAP_KEY'].values:
+            debug_template_rows = template[template['MAP_KEY'] == debug_ims_code]
+            print(f"\n[DEBUG TEMPLATE] IMS Code {debug_ims_code} found in template MAP_KEY:")
+            print(f"  - Count: {len(debug_template_rows)} rows")
+            print(f"  - COD FORNECEDOR values: {debug_template_rows['COD FORNECEDOR'].unique()}")
+            if 'COD IMS' in template.columns:
+                print(f"  - COD IMS values: {debug_template_rows['COD IMS'].unique()}")
+        else:
+            print(f"\n[DEBUG TEMPLATE] ⚠️ IMS Code {debug_ims_code} NOT in template MAP_KEY")
+        
+        # Show all short MAP_KEY codes in template
+        short_map_keys = template[template['MAP_KEY'] < 1000000]['MAP_KEY'].unique()
+        if len(short_map_keys) > 0:
+            print(f"\n[DEBUG TEMPLATE] Short MAP_KEY values (< 1000000) in template: {len(short_map_keys)}")
+            print(f"  - Sample: {short_map_keys[:10]}")
+        
         template['FORNECEDOR'] =template['MAP_KEY'].map(mapa_fornecedores)
+        
+        # DEBUG: Check mapping results for short codes
+        short_code_rows = template[template['MAP_KEY'] < 1000000]
+        if not short_code_rows.empty:
+            missing_fornecedor = short_code_rows[short_code_rows['FORNECEDOR'].isna()]
+            if not missing_fornecedor.empty:
+                print(f"\n[DEBUG MAPPING RESULT] ⚠️ {len(missing_fornecedor)} short code rows have missing FORNECEDOR after mapping:")
+                print(f"  - MAP_KEY values without match: {missing_fornecedor['MAP_KEY'].unique()}")
+            else:
+                print(f"\n[DEBUG MAPPING RESULT] ✓ All {len(short_code_rows)} short code rows successfully mapped to FORNECEDOR")
        
         # Clean up FORNECEDOR column - remove .0 suffix if it exists (when mapping fails, it might keep numeric values)
         if 'FORNECEDOR' in template.columns:
