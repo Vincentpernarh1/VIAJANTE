@@ -259,23 +259,10 @@ def input_demanda(cod_destinos, use_all_codes=False, sheet_name=None, use_manual
             return not is_in_ct  # FTL/other: include only if NOT in CT lookup
     
     all_rows = []  # collect all rows here
-    
-    # DEBUG: Track supplier 800036730 through the matching process
-    debug_800036730_from_demandas = 0
-    debug_800036730_matched = 0
-    debug_800036730_filtered_by_ct = 0
-    
-    # Track Flechinho rows (COD FORNECEDOR = COD IMS)
-    flechinho_count = 0
 
     if use_all_codes:
         # Process all demand rows without filtering by COD DESTINO
         df = Processar_Demandas(None, sheet_name=sheet_name)
-        
-        # DEBUG: Count supplier 800036730 in demandas
-        debug_800036730_from_demandas = len(df[df['COD FORNECEDOR'] == 800036730])
-        if debug_800036730_from_demandas > 0:
-            print(f"\n[DEBUG MAIN] Supplier 800036730 from Processar_Demandas: {debug_800036730_from_demandas} rows")
         
         for _, row in df.iterrows():
             cod_forn = str(row["COD FORNECEDOR"]).strip() if pd.notna(row.get("COD FORNECEDOR")) else None
@@ -328,23 +315,11 @@ def input_demanda(cod_destinos, use_all_codes=False, sheet_name=None, use_manual
                             "MOT": mot,
                             "FLECHINHA": is_flechinha
                         })
-                        # DEBUG: Track 800036730
-                        if cod_forn == '800036730':
-                            debug_800036730_matched += 1
-                    else:
-                        # DEBUG: Track if filtered by CT
-                        if cod_forn == '800036730':
-                            debug_800036730_filtered_by_ct += 1
-                            print(f"[DEBUG] Supplier 800036730 FILTERED by should_include_pn: DESENHO={row['DESENHO']}, DEST={cod_dest_full}, MOT={mot}")
     
                                    
                         
             # If no fluxo match was found for this demand row, still append a row indicating missing fornecedor
             if not matched_any:
-                # DEBUG: Track unmatched 800036730
-                if cod_forn == '800036730':
-                    print(f"[DEBUG] Supplier 800036730 NOT MATCHED in FLUXO.xlsx: DESENHO={row['DESENHO']}, QTDE={row['QTDE']}")
-                
                 all_rows.append({
                     "COD FORNECEDOR": matched_cod_forn,
                     "COD IMS": cod_ims_from_file,
@@ -364,11 +339,6 @@ def input_demanda(cod_destinos, use_all_codes=False, sheet_name=None, use_manual
         
         # Pass sheet_name to Processar_Demandas for saturação file processing
         df = Processar_Demandas(cod_destinos[0], sheet_name=sheet_name)
-        
-        # DEBUG: Count supplier 800036730 in demandas
-        debug_800036730_from_demandas = len(df[df['COD FORNECEDOR'] == 800036730])
-        if debug_800036730_from_demandas > 0:
-            print(f"\n[DEBUG MAIN] Supplier 800036730 from Processar_Demandas: {debug_800036730_from_demandas} rows")
 
         for cod_dest in cod_destinos:
             
@@ -379,12 +349,6 @@ def input_demanda(cod_destinos, use_all_codes=False, sheet_name=None, use_manual
                 
                 # Check if this is Flechinho data (COD FORNECEDOR = COD IMS)
                 is_flechinho = cod_forn and cod_ims_from_file and cod_forn == cod_ims_from_file
-                if is_flechinho:
-                    flechinho_count += 1
-                
-                # DEBUG: Show Flechinho detection for 1097
-                if is_flechinho and '1097' in cod_forn:
-                    print(f"[FLECHINHO] Detected: COD FORN={cod_forn}, COD IMS={cod_ims_from_file}, DESENHO={row['DESENHO']}, DEST={cod_dest} → Using EXACT matching")
                 
                 codigo = None
                 tipo = None
@@ -450,18 +414,6 @@ def input_demanda(cod_destinos, use_all_codes=False, sheet_name=None, use_manual
                         "MOT": mot,
                         "FLECHINHA": is_flechinha
                     })
-                    # DEBUG: Track 800036730
-                    if cod_forn == '800036730':
-                        debug_800036730_matched += 1
-                elif matched and not should_include_pn(row["DESENHO"], cod_dest_full, mot):
-                    # DEBUG: Matched but filtered by should_include_pn
-                    if cod_forn == '800036730':
-                        debug_800036730_filtered_by_ct += 1
-                        print(f"[DEBUG] Supplier 800036730 FILTERED by should_include_pn: DESENHO={row['DESENHO']}, DEST={cod_dest_full}, MOT={mot}")
-                elif not matched:
-                    # DEBUG: Not matched in FLUXO
-                    if cod_forn == '800036730':
-                        print(f"[DEBUG] Supplier 800036730 NOT MATCHED in FLUXO.xlsx: DESENHO={row['DESENHO']}, COD_DEST expected={cod_dest}")
 
    
     df_final = pd.DataFrame(all_rows).drop_duplicates().reset_index(drop=True)

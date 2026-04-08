@@ -43,9 +43,6 @@ caminho_base = os.getcwd()
 # Lista global para coletar erros e avisos para mostrar ao usuário
 erros_processamento = []
 
-# Global capacity statistics for debug suppliers (shared between functions)
-capacity_stats = {}
-
 def adicionar_erro(mensagem, tipo="ERRO"):
     """Adiciona uma mensagem de erro ou aviso à lista global sem duplicatas."""
     msg = f"[{tipo}] {mensagem}"
@@ -138,9 +135,6 @@ def Processar_Demandas(cod_destino, pasta_demandas="Demandas", sheet_name=None):
                             desenho = linha[3:14]
                             cod_fornecedor = linha[-20:-11]
                             quantidade = linha[-11:].replace("+", "")
-                            
-                            if cod_fornecedor in '800036730' :
-                                print(f"DEBUG: Extraído do arquivo '{nome_arquivo}': DESENHO='{desenho}', COD FORNECEDOR='{cod_fornecedor}', QTDE='{int(quantidade)}'")
 
                             # Adiciona os dados extraídos à lista deste arquivo
                             dados_arquivo_atual.append({
@@ -203,10 +197,8 @@ def Processar_Demandas(cod_destino, pasta_demandas="Demandas", sheet_name=None):
                                 
                 # Só processa arquivos de saturação se sheet_name foi fornecido
                 if sheet_name is None:
-                    print(f"INFO: Arquivo de saturação '{nome_arquivo}' ignorado (sheet_name não fornecido)")
                     continue
                 
-                # Debug: mostra informações do arquivo Excel
                 try:
                     xl_file = pd.ExcelFile(caminho_completo_arquivo)
                     
@@ -218,12 +210,7 @@ def Processar_Demandas(cod_destino, pasta_demandas="Demandas", sheet_name=None):
                         adicionar_erro(f"Arquivo '{nome_arquivo}': Sheet '{sheet_name}' não encontrada. Disponíveis: {', '.join(xl_file.sheet_names)}", "ERRO")
                         continue
                     
-                    # Log the match if different
-                    if actual_sheet_name != sheet_name:
-                        print(f"INFO: Sheet '{sheet_name}' matched to '{actual_sheet_name}' in '{nome_arquivo}'")
-                    
                 except Exception as e:
-                    print(f"Erro ao ler sheets do arquivo '{nome_arquivo}': {e}")
                     continue
                 
                 # Lê o arquivo Excel de saturação da sheet específica com header na linha 3 (índice 2)
@@ -849,15 +836,6 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
             .sum()
             .rename(columns={'MDR': 'EMBALAGEM', 'QTD EMBALAGENS': 'TOTAL DE CXS'})
         )
-        
-        # --- DEBUG: Verify df_saturacao groupby for supplier 800006372 ---
-        debug_sat = df_saturacao[df_saturacao['COD FORNECEDOR'] == 800006372].copy()
-        if False and not debug_sat.empty:  # Commented out
-            print(f"\n[DEBUG] df_saturacao GROUPBY for supplier 800006372:")
-            print(f"  Total MDR groups: {len(debug_sat)}")
-            for idx, row in debug_sat.iterrows():
-                print(f"  * MDR {row['EMBALAGEM']}: TOTAL DE CXS = {row['TOTAL DE CXS']}")
-            print()
 
         # Recupera a coluna VEICULO para cada fornecedor + embalagem
         col_veiculo = template[['COD FORNECEDOR', 'MDR', 'VEICULO']].drop_duplicates()
@@ -955,21 +933,6 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
                     capacity_selected = capacity_max
                     selection_method = 'MAX'
                 
-                # Track stats for debug suppliers
-                if fornecedor in capacity_stats:
-                    capacity_stats[fornecedor].append({
-                        'MDR': mdr,
-                        'Veic': cod_veic,
-                        'Type': 'SUPPLIER-SPECIFIC',
-                        'Mean': capacity_mean,
-                        'Mode': capacity_mode,
-                        'Min': capacity_min,
-                        'Max': capacity_max,
-                        'Selected': capacity_selected,
-                        'Method': selection_method,
-                        'Count': len(capacidade_series_forn)
-                    })
-                
                 return capacity_selected
             
             # Fall back to all suppliers for this MDR, use MAX
@@ -989,21 +952,6 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
             # Use MAX for calculations
             capacity_selected = capacity_max
             selection_method = 'MAX'
-            
-            # Track stats for debug suppliers
-            if fornecedor in capacity_stats:
-                capacity_stats[fornecedor].append({
-                    'MDR': mdr,
-                    'Veic': cod_veic,
-                    'Type': 'FALLBACK',
-                    'Mean': capacity_mean,
-                    'Mode': capacity_mode,
-                    'Min': capacity_min,
-                    'Max': capacity_max,
-                    'Selected': capacity_selected,
-                    'Method': selection_method,
-                    'Count': len(capacidade_series)
-                })
             
             return capacity_selected
 
@@ -1103,52 +1051,6 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
         df_saturacao['M³ POR EMBALAGEM'] = df_saturacao['CHAVE'].map(mapa_volume_efi) * \
                                             df_saturacao['CXS_POR_PALLET'] * df_saturacao['CXS/PALLETS_TOTAL']
 
-        # --- DEBUG: Detailed breakdown for supplier 800006372 BEFORE integrar_saturacao_total ---
-        debug_sat_800006372 = df_saturacao[df_saturacao['COD FORNECEDOR'] == 800006372].copy()
-        if False and not debug_sat_800006372.empty:  # Commented out
-            print(f"\n{'='*120}")
-            print(f"[DEBUG] DETAILED SATURACAO BREAKDOWN for Supplier 800006372 (BEFORE integrar_saturacao_total)")
-            print(f"{'='*120}")
-            if usar_manual:
-                print(f"Mode: usar_manual=True (Global vehicle)")
-                print(f"  * Global Vehicle Code: {veiculo}")
-                print(f"  * Global Vehicle Name: {valor_veiculo}")
-            else:
-                print(f"Mode: usar_manual=False (Per-route vehicles)")
-                unique_vehs = debug_sat_800006372['VEICULO'].unique()
-                for v in unique_vehs:
-                    v_name = mapa_coluna_capacidade.get(int(v), "Unknown")
-                    print(f"  * Vehicle {int(v)}: {v_name}")
-            
-            print(f"\nPer MDR breakdown:")
-            total_manual_sat = 0
-            for idx, row in debug_sat_800006372.iterrows():
-                mdr = row['EMBALAGEM']
-                veic_code = int(row['VEICULO'])
-                veic_name = mapa_coluna_capacidade.get(veic_code, "Unknown")
-                total_cxs = row['TOTAL DE CXS']
-                cxs_por_pallet = row['CXS_POR_PALLET']
-                cxs_pallets_total = row['CXS/PALLETS_TOTAL']
-                capacidade = row['CAPACIDADE']
-                eficiencia = row['EFICIÊNCIA_COMPRIMENTO']
-                
-                print(f"\n  📦 MDR: {mdr} | Vehicle: {veic_code} ({veic_name})")
-                print(f"    * TOTAL DE CXS (sum of QTD EMBALAGENS): {total_cxs}")
-                print(f"    * CXS_POR_PALLET (boxes per pallet): {cxs_por_pallet}")
-                print(f"    * CXS/PALLETS_TOTAL (number of pallets): {total_cxs}/{cxs_por_pallet} = {cxs_pallets_total:.2f}")
-                print(f"    * CAPACIDADE (truck capacity for this MDR): {capacidade}")
-                print(f"    * Proporcao (pallets/capacity): {cxs_pallets_total:.2f}/{capacidade} = {cxs_pallets_total/capacidade if capacidade > 0 else 0:.4f}")
-                print(f"    * EFICIÊNCIA_COMPRIMENTO: {eficiencia:.4f}")
-                print(f"    * Expected SATURAÇÃO_TOTAL: ({cxs_pallets_total:.2f}/{capacidade}) * {eficiencia:.4f} = {(cxs_pallets_total/capacidade*eficiencia if capacidade > 0 else 0):.4f}")
-                
-                expected_sat = (cxs_pallets_total / capacidade * eficiencia) if capacidade > 0 else 0
-                total_manual_sat += expected_sat
-            
-            print(f"\n[RESULT] TOTAL SATURACAO (sum of all MDRs): {total_manual_sat:.4f}")
-            print(f"   As percentage: {total_manual_sat * 100:.2f}%")
-            print(f"   Expected CARGAS: ceil({total_manual_sat * 100:.2f} / 100) = {int(np.ceil(total_manual_sat * 100 / 100))}")
-            print(f"{'='*120}\n")
-
         # --- Cálculo de empilhamento ---
         df_calculo_empilhamento = calcular_empilhamento(df_saturacao, db_empilhamento)
 
@@ -1164,14 +1066,6 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
                 proporcao = row['CXS/PALLETS_TOTAL'] / row['CAPACIDADE']
                 result = (proporcao + soma_saturacoes) * row['EFICIÊNCIA_COMPRIMENTO']
                 
-                # Debug for supplier 800006372 - COMMENTED OUT
-                # if row['COD FORNECEDOR'] == 800006372:
-                #     print(f"  [DEBUG integrar_saturacao_total] MDR={row['EMBALAGEM']}: "
-                #           f"CXS/PALLETS={row['CXS/PALLETS_TOTAL']:.2f}, CAPACIDADE={row['CAPACIDADE']}, "
-                #           f"proporcao={proporcao:.4f}, soma_emp={soma_saturacoes:.4f}, "
-                #           f"eficiencia={row['EFICIÊNCIA_COMPRIMENTO']:.4f}, "
-                #           f"resultado=({proporcao:.4f}+{soma_saturacoes:.4f})*{row['EFICIÊNCIA_COMPRIMENTO']:.4f}={result:.4f}")
-                
                 return result
 
             df_sat['SATURAÇÃO_TOTAL'] = df_sat.apply(calcular, axis=1)
@@ -1184,17 +1078,7 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
             df_sat.loc[mask, 'SATURAÇÃO_POR_MDR'] = df_sat.loc[mask, 'SATURAÇÃO_TOTAL'] / df_sat.loc[mask, 'TOTAL DE CXS']
             df_sat['SATURAÇÃO_POR_MDR'] = df_sat['SATURAÇÃO_POR_MDR'].replace([np.inf, -np.inf], np.nan).fillna(0)
             
-            # Debug for supplier 800006372 - COMMENTED OUT
-            # debug_rows = df_sat[df_sat['COD FORNECEDOR'] == 800006372]
-            # if not debug_rows.empty:
-            #     print(f"\n  [DEBUG] After SATURAÇÃO_POR_MDR calculation for 800006372:")
-            #     for idx, row in debug_rows.iterrows():
-            #         print(f"    MDR={row['EMBALAGEM']}: SATURAÇÃO_TOTAL={row['SATURAÇÃO_TOTAL']:.4f}, "
-            #               f"TOTAL_CXS={row['TOTAL DE CXS']}, "
-            #               f"SATURAÇÃO_POR_MDR={row['SATURAÇÃO_TOTAL']}/{row['TOTAL DE CXS']}={row['SATURAÇÃO_POR_MDR']:.6f}")
-            
             return df_sat
-            df_sat['SATURAÇÃO_POR_MDR'] = df_sat['SATURAÇÃO_POR_MDR'].replace([np.inf, -np.inf], np.nan).fillna(0)
             
             return df_sat
 
@@ -1247,8 +1131,6 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
         # Handle infinity and NaN values in QTD EMBALAGENS before summing
         embalagens_series = template_calc['QTD EMBALAGENS'].replace([np.inf, -np.inf], np.nan).fillna(0)
         embalagens = embalagens_series.sum()
-        
-        print(f"[DEBUG] embalagens sum: {embalagens}, is_finite: {np.isfinite(embalagens)}")
 
         # Preenche a tree_resumo (que deve ser passada como argumento)
         resumo_dados = [
