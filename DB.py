@@ -1309,6 +1309,43 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
             adicionar_erro(f"{duplicates_removed_write} linha(s) duplicada(s) removida(s) antes de salvar VIAJANTE", "INFO")
             print(f"[INFO] Removed {duplicates_removed_write} additional duplicates before Excel write")
         
+        # --- Filter based on COD IMS and COD DESTINO ---
+        # COD IMS can contain multiple values separated by '/' (e.g., "800002365/800036730")
+        # Remove rows where: COD FORNECEDOR is contained in COD IMS AND COD DESTINO != 1046
+        # Keep rows where: COD FORNECEDOR is NOT in COD IMS, OR (is in COD IMS AND COD DESTINO = 1046)
+        if 'COD IMS' in template.columns:
+            rows_before_filter = len(template)
+            
+            # Normalize COD IMS to string for comparison (already normalized COD FORNECEDOR and COD DESTINO above)
+            template['COD IMS'] = template['COD IMS'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+            
+            # Convert COD FORNECEDOR to string for comparison
+            template['COD FORNECEDOR_STR'] = template['COD FORNECEDOR'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+            
+            # Function to check if COD FORNECEDOR is in COD IMS (handling / separator)
+            def fornecedor_in_ims(row):
+                cod_forn = str(row['COD FORNECEDOR_STR'])
+                cod_ims = str(row['COD IMS'])
+                if pd.isna(cod_ims) or cod_ims == '' or cod_ims == 'nan' or cod_ims == '0':
+                    return False
+                # Split COD IMS by '/' and check if COD FORNECEDOR is in the list
+                ims_values = [v.strip() for v in cod_ims.split('/')]
+                return cod_forn in ims_values
+            
+            # Build filter mask: keep if (NOT in IMS) OR (in IMS AND destino = 1046)
+            template['IS_IN_IMS'] = template.apply(fornecedor_in_ims, axis=1)
+            mask_keep = (~template['IS_IN_IMS']) | ((template['IS_IN_IMS']) & (template['COD DESTINO'] == '1046'))
+            
+            # Apply filter
+            template = template[mask_keep].copy()
+            
+            # Clean up temporary columns
+            template = template.drop(columns=['COD FORNECEDOR_STR', 'IS_IN_IMS'])
+            
+            rows_removed = rows_before_filter - len(template)
+            if rows_removed > 0:
+                adicionar_erro(f"{rows_removed} linha(s) removida(s) (COD FORNECEDOR in COD IMS e COD DESTINO != 1046)", "INFO")
+        
         # --- Exporta para Excel formatado ---
         with pd.ExcelWriter('VIAJANTE.xlsx', engine='openpyxl') as writer:
             template.to_excel(writer, sheet_name='Template Completo', index=False)
@@ -1398,6 +1435,37 @@ def consolidar_dados(use_manual=False, manual_veiculo=None):
 
     # Clean up FORNECEDOR - remove .0 suffix and handle NaN
     template['FORNECEDOR'] = template['FORNECEDOR'].fillna('').astype(str).str.replace(r'\.0$', '', regex=True)
+
+    # --- Filter based on COD IMS and COD DESTINO ---
+    # COD IMS can contain multiple values separated by '/' (e.g., "800002365/800036730")
+    # Remove rows where: COD FORNECEDOR is contained in COD IMS AND COD DESTINO != 1046
+    # Keep rows where: COD FORNECEDOR is NOT in COD IMS, OR (is in COD IMS AND COD DESTINO = 1046)
+    if 'COD IMS' in template.columns:
+        rows_before_filter = len(template)
+        
+        # Function to check if COD FORNECEDOR is in COD IMS (handling / separator)
+        def fornecedor_in_ims(row):
+            cod_forn = str(row['COD FORNECEDOR'])
+            cod_ims = str(row['COD IMS'])
+            if pd.isna(cod_ims) or cod_ims == '' or cod_ims == 'nan' or cod_ims == '0':
+                return False
+            # Split COD IMS by '/' and check if COD FORNECEDOR is in the list
+            ims_values = [v.strip() for v in cod_ims.split('/')]
+            return cod_forn in ims_values
+        
+        # Build filter mask: keep if (NOT in IMS) OR (in IMS AND destino = 1046)
+        template['IS_IN_IMS'] = template.apply(fornecedor_in_ims, axis=1)
+        mask_keep = (~template['IS_IN_IMS']) | ((template['IS_IN_IMS']) & (template['COD DESTINO'] == '1046'))
+        
+        # Apply filter
+        template = template[mask_keep].copy()
+        
+        # Clean up temporary column
+        template = template.drop(columns=['IS_IN_IMS'])
+        
+        rows_removed = rows_before_filter - len(template)
+        if rows_removed > 0:
+            print(f"[INFO] consolidar_dados: Removed {rows_removed} rows (COD FORNECEDOR in COD IMS and COD DESTINO != 1046)")
 
     # If user forced a manual vehicle, override the template VEICULO column
     if use_manual and manual_veiculo is not None:

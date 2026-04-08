@@ -264,6 +264,9 @@ def input_demanda(cod_destinos, use_all_codes=False, sheet_name=None, use_manual
     debug_800036730_from_demandas = 0
     debug_800036730_matched = 0
     debug_800036730_filtered_by_ct = 0
+    
+    # Track Flechinho rows (COD FORNECEDOR = COD IMS)
+    flechinho_count = 0
 
     if use_all_codes:
         # Process all demand rows without filtering by COD DESTINO
@@ -370,6 +373,15 @@ def input_demanda(cod_destinos, use_all_codes=False, sheet_name=None, use_manual
                 cod_forn = str(row["COD FORNECEDOR"]).strip() if pd.notna(row.get("COD FORNECEDOR")) else None
                 cod_ims_from_file = str(row.get("COD IMS", "")).strip() if pd.notna(row.get("COD IMS")) else None
                 
+                # Check if this is Flechinho data (COD FORNECEDOR = COD IMS)
+                is_flechinho = cod_forn and cod_ims_from_file and cod_forn == cod_ims_from_file
+                if is_flechinho:
+                    flechinho_count += 1
+                
+                # DEBUG: Show Flechinho detection for 1097
+                if is_flechinho and '1097' in cod_forn:
+                    print(f"[FLECHINHO] Detected: COD FORN={cod_forn}, COD IMS={cod_ims_from_file}, DESENHO={row['DESENHO']}, DEST={cod_dest} → Using EXACT matching")
+                
                 codigo = None
                 tipo = None
                 mot = None
@@ -385,8 +397,14 @@ def input_demanda(cod_destinos, use_all_codes=False, sheet_name=None, use_manual
                     # Pega o COD IMS do fluxo (pode estar na coluna COD IMS)
                     fluxo_cod_ims = str(linha_fluxo.get("COD IMS", "")).strip() if pd.notna(linha_fluxo.get("COD IMS")) else None
 
-                    # Match por COD FORNECEDOR ou por COD IMS
-                    match_fornecedor = cod_forn and cod_forn in fornecedor_str
+                    # Match logic: EXACT for Flechinho, CONTAINS for others
+                    if is_flechinho:
+                        # Flechinho: Use EXACT match to avoid matching "1094/1097" when we want "1097"
+                        match_fornecedor = cod_forn and cod_forn == fornecedor_str
+                    else:
+                        # Non-Flechinho: Use CONTAINS match (original logic)
+                        match_fornecedor = cod_forn and cod_forn in fornecedor_str
+                    
                     match_ims = cod_ims_from_file and fluxo_cod_ims and cod_ims_from_file == fluxo_cod_ims
                     
                     # Exact match for COD DESTINO (no splitting, match the whole string)
