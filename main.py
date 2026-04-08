@@ -37,27 +37,6 @@ warnings.filterwarnings(
     message="^WARNING .*" # Hides the file size warnings which don't have a category
 )
 
-# ------------------- Database Update Check -------------------
-# Check and update database files from SharePoint if needed
-print("\n" + "="*70)
-print("VIAJANTE - Verificando atualizações do banco de dados...")
-print("="*70)
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'Update DataBase'))
-try:
-    from Update_Manager import check_and_update_files
-    # Check files and update if older than 5 days (visible update process)
-    update_result = check_and_update_files(max_age_days=5, silent=False)
-    if update_result.get("updated"):
-        print("\n✓ Banco de dados atualizado com sucesso!")
-    else:
-        print("\n✓ Banco de dados já está atualizado.")
-    print("="*70 + "\n")
-except Exception as e:
-    print(f"\n⚠️ Aviso: Não foi possível verificar atualizações: {e}")
-    print("Continuando com arquivos existentes...")
-    print("="*70 + "\n")
-# ---------------------------------------------------------------
-
 caminho_base = os.getcwd()
 # --- START: Global variables for filtering ---
 # Stores the complete, unfiltered data from the Treeview
@@ -849,6 +828,46 @@ footer_right = Label(footer_frame, text="Developer: Vincent Pernarh",
                      font=("Arial", 7), bg="#002855", fg="#FFCC00", 
                      anchor="e", padx=8, pady=0)
 footer_right.pack(side=RIGHT, fill=Y)
+
+# ------------------- Database Update Check -------------------
+# Check and update database files from SharePoint if needed
+# This runs after GUI is created so we can show progress in the loading_label
+
+def update_progress_callback(message):
+    """Callback to update the loading label with progress messages"""
+    loading_label.config(text=message, bg="#002855", fg="#FFCC00")
+    loading_label.place(relx=0.5, rely=0.5, anchor='center')
+    loading_label.lift()
+    janela.update_idletasks()
+
+def check_database_updates():
+    """Check and update database files in a thread"""
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'Update DataBase'))
+    try:
+        from Update_Manager import check_and_update_files
+        
+        # Show initial message
+        update_progress_callback("Verificando atualizações do banco de dados...")
+        
+        # Check files and update if older than 5 days
+        update_result = check_and_update_files(
+            max_age_days=5, 
+            silent=False,
+            progress_callback=update_progress_callback
+        )
+        
+        if update_result.get("updated"):
+            janela.after(0, lambda: finalizar_status("✓ Banco de dados atualizado!", "#2e8b57"))
+        else:
+            janela.after(0, lambda: finalizar_status("✓ Banco de dados atualizado!", "#2e8b57"))
+            
+    except Exception as e:
+        print(f"⚠️ Aviso: Não foi possível verificar atualizações: {e}")
+        janela.after(0, lambda: loading_label.place_forget())
+
+# Start update check in background thread
+threading.Thread(target=check_database_updates, daemon=True).start()
+# ---------------------------------------------------------------
 
 janela.mainloop()
 

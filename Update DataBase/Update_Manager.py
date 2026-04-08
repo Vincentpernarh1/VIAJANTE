@@ -53,13 +53,14 @@ def needs_update(file_pattern, max_age_days=5):
     
     return False, f"File is current ({age_days} days old)", latest_file
 
-def check_and_update_files(max_age_days=5, force_update=False, silent=False):
+def check_and_update_files(max_age_days=5, force_update=False, silent=False, progress_callback=None):
     """Check file ages and update if needed
     
     Args:
         max_age_days: Maximum file age in days before triggering update
         force_update: If True, update regardless of file age
         silent: If True, suppress console output (for automated runs)
+        progress_callback: Optional function(message) to report progress to GUI
         
     Returns:
         dict: Results of the update process
@@ -93,6 +94,12 @@ def check_and_update_files(max_age_days=5, force_update=False, silent=False):
             if latest:
                 print(f"  File: {os.path.basename(latest)}")
         
+        if progress_callback:
+            if needs:
+                progress_callback(f"⚠️ {file_name}: {reason}")
+            else:
+                progress_callback(f"✓ {file_name} atualizado")
+        
         if needs or force_update:
             update_needed = True
             reasons.append(f"{file_name}: {reason}")
@@ -104,6 +111,9 @@ def check_and_update_files(max_age_days=5, force_update=False, silent=False):
             print("Downloading latest files from SharePoint...")
             print("="*70)
         
+        if progress_callback:
+            progress_callback("Baixando arquivos do SharePoint...")
+        
         try:
             # Import and run the download function
             from Update_Navigation import download_sharepoint_files
@@ -111,9 +121,10 @@ def check_and_update_files(max_age_days=5, force_update=False, silent=False):
             # For now, always run with browser visible to avoid profile conflicts
             # TODO: Implement proper headless mode detection after profile initialization
             results = download_sharepoint_files(
-                headless=False,
+                headless=True,
                 silent=silent,
-                auto_close=True  # Auto-close when called from application
+                auto_close=True,  # Auto-close when called from application
+                progress_callback=progress_callback
             )
             
             if not silent:

@@ -15,9 +15,10 @@ if not sharepoint_url:
 
 print(f"SharePoint URL: {sharepoint_url}")
 
-# Create the download folder path with date
+# Create the download folder path - use script directory as base
 current_date = datetime.now().strftime("%Y-%m-%d")
-download_folder = os.path.abspath(rf"..\BD")
+download_folder = os.path.join(script_dir, "..", "BD")
+download_folder = os.path.abspath(download_folder)
 
 # Ensure the download folder exists
 os.makedirs(download_folder, exist_ok=True)
@@ -67,10 +68,13 @@ def cleanup_old_versions(filename, current_file, silent=False):
     
     return deleted_count
 
-def download_file_from_sharepoint(page, filename, silent=False):
+def download_file_from_sharepoint(page, filename, silent=False, progress_callback=None):
     """Download a specific file from the SharePoint page"""
     if not silent:
         print(f"\nLooking for {filename} file...")
+    
+    if progress_callback:
+        progress_callback(f"Procurando arquivo {filename}...")
     
     # Wait a moment for page to be ready
     page.wait_for_timeout(2000)
@@ -93,6 +97,9 @@ def download_file_from_sharepoint(page, filename, silent=False):
             if element.is_visible(timeout=2000):
                 if not silent:
                     print(f"  ✓ Found file using selector: {selector}")
+                
+                if progress_callback:
+                    progress_callback(f"Baixando {filename}...")
                 
                 # Right-click to open context menu
                 element.click(button="right")
@@ -118,6 +125,9 @@ def download_file_from_sharepoint(page, filename, silent=False):
                 if not silent:
                     print(f"  ✓ Downloaded successfully to: {saved_filename}")
                 
+                if progress_callback:
+                    progress_callback(f"✓ {filename} baixado com sucesso!")
+                
                 # Clean up old versions
                 cleanup_old_versions(filename, save_path, silent=silent)
                 
@@ -132,18 +142,23 @@ def download_file_from_sharepoint(page, filename, silent=False):
     
     return file_found
 
-def download_sharepoint_files(headless=False, silent=False, auto_close=False):
+def download_sharepoint_files(headless=False, silent=False, auto_close=False, progress_callback=None):
     """Main function to download all required files from SharePoint
     
     Args:
         headless: If True, run browser in headless mode (no window)
         silent: If True, suppress print messages
         auto_close: If True, close browser automatically without waiting for input
+        progress_callback: Optional function(message) to report progress to GUI
     """
     with sync_playwright() as p:
         # Launch Edge with automation profile
         if not silent:
             print("Launching Edge browser for automation...")
+        
+        if progress_callback:
+            progress_callback("Abrindo navegador Edge...")
+        
         context = p.chromium.launch_persistent_context(
             user_data_dir=automation_profile,
             headless=headless,
@@ -163,9 +178,15 @@ def download_sharepoint_files(headless=False, silent=False, auto_close=False):
                 print("2. The session will be saved for future runs")
                 print()
             
+            if progress_callback:
+                progress_callback("Conectando ao SharePoint...")
+            
             page.goto(sharepoint_url, wait_until="domcontentloaded", timeout=60000)
             if not silent:
                 print("Page loaded!")
+            
+            if progress_callback:
+                progress_callback("SharePoint carregado - iniciando downloads...")
             
             # Wait for the page to fully load
             page.wait_for_timeout(3000)
@@ -173,7 +194,7 @@ def download_sharepoint_files(headless=False, silent=False, auto_close=False):
             # Download each file
             results = {}
             for filename in FILES_TO_DOWNLOAD:
-                success = download_file_from_sharepoint(page, filename, silent=silent)
+                success = download_file_from_sharepoint(page, filename, silent=silent, progress_callback=progress_callback)
                 results[filename] = success
             
             # Summary
@@ -191,9 +212,10 @@ def download_sharepoint_files(headless=False, silent=False, auto_close=False):
             if not silent:
                 print(f"\n✗ Error: {e}")
                 print("Taking a screenshot for debugging...")
-            page.screenshot(path="../debug_screenshot.png")
+            screenshot_path = os.path.join(script_dir, "..", "debug_screenshot.png")
+            page.screenshot(path=screenshot_path)
             if not silent:
-                print("Screenshot saved to: debug_screenshot.png")
+                print(f"Screenshot saved to: {screenshot_path}")
             return {f: False for f in FILES_TO_DOWNLOAD}
         
         finally:
