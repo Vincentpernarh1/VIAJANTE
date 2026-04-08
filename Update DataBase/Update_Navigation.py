@@ -4,9 +4,14 @@ from playwright.sync_api import sync_playwright
 from datetime import datetime
 import shutil
 
-# Load environment variables
-dotenv.load_dotenv(dotenv_path="../BD/.env")
+# Load environment variables using absolute path
+script_dir = os.path.dirname(os.path.abspath(__file__))
+env_path = os.path.join(script_dir, "..", "BD", ".env")
+dotenv.load_dotenv(dotenv_path=env_path)
 sharepoint_url = os.getenv("SHAREPOINT_URL")
+
+if not sharepoint_url:
+    raise ValueError(f"SHAREPOINT_URL not found in .env file at {env_path}")
 
 print(f"SharePoint URL: {sharepoint_url}")
 
@@ -127,12 +132,13 @@ def download_file_from_sharepoint(page, filename, silent=False):
     
     return file_found
 
-def download_sharepoint_files(headless=False, silent=False):
+def download_sharepoint_files(headless=False, silent=False, auto_close=False):
     """Main function to download all required files from SharePoint
     
     Args:
         headless: If True, run browser in headless mode (no window)
         silent: If True, suppress print messages
+        auto_close: If True, close browser automatically without waiting for input
     """
     with sync_playwright() as p:
         # Launch Edge with automation profile
@@ -191,7 +197,7 @@ def download_sharepoint_files(headless=False, silent=False):
             return {f: False for f in FILES_TO_DOWNLOAD}
         
         finally:
-            if not silent:
+            if not silent and not auto_close:
                 input("\nPress Enter to close the browser...")
             context.close()
 

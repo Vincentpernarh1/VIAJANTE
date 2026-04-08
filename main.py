@@ -39,19 +39,23 @@ warnings.filterwarnings(
 
 # ------------------- Database Update Check -------------------
 # Check and update database files from SharePoint if needed
-print("Checking database files...")
+print("\n" + "="*70)
+print("VIAJANTE - Verificando atualizações do banco de dados...")
+print("="*70)
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'Update DataBase'))
 try:
     from Update_Manager import check_and_update_files
-    # Check files and update if older than 5 days
+    # Check files and update if older than 5 days (visible update process)
     update_result = check_and_update_files(max_age_days=5, silent=False)
     if update_result.get("updated"):
-        print("Database files have been updated.")
+        print("\n✓ Banco de dados atualizado com sucesso!")
     else:
-        print("Database files are current.")
+        print("\n✓ Banco de dados já está atualizado.")
+    print("="*70 + "\n")
 except Exception as e:
-    print(f"Warning: Could not check database updates: {e}")
-    print("Continuing with existing files...")
+    print(f"\n⚠️ Aviso: Não foi possível verificar atualizações: {e}")
+    print("Continuando com arquivos existentes...")
+    print("="*70 + "\n")
 # ---------------------------------------------------------------
 
 caminho_base = os.getcwd()

@@ -112,7 +112,8 @@ def check_and_update_files(max_age_days=5, force_update=False, silent=False):
             # TODO: Implement proper headless mode detection after profile initialization
             results = download_sharepoint_files(
                 headless=False,
-                silent=silent
+                silent=silent,
+                auto_close=True  # Auto-close when called from application
             )
             
             if not silent:
