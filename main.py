@@ -37,6 +37,23 @@ warnings.filterwarnings(
     message="^WARNING .*" # Hides the file size warnings which don't have a category
 )
 
+# ------------------- Database Update Check -------------------
+# Check and update database files from SharePoint if needed
+print("Checking database files...")
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'Update DataBase'))
+try:
+    from Update_Manager import check_and_update_files
+    # Check files and update if older than 5 days
+    update_result = check_and_update_files(max_age_days=5, silent=False)
+    if update_result.get("updated"):
+        print("Database files have been updated.")
+    else:
+        print("Database files are current.")
+except Exception as e:
+    print(f"Warning: Could not check database updates: {e}")
+    print("Continuing with existing files...")
+# ---------------------------------------------------------------
+
 caminho_base = os.getcwd()
 # --- START: Global variables for filtering ---
 # Stores the complete, unfiltered data from the Treeview

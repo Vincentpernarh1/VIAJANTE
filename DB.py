@@ -10,6 +10,7 @@ import re
 from PIL import Image, ImageTk
 import traceback
 import os
+import glob
 import numpy as np
 import warnings 
 import contextlib
@@ -39,6 +40,26 @@ warnings.filterwarnings(
 
 
 caminho_base = os.getcwd()
+
+# Helper function to find latest file matching pattern
+def get_latest_file(pattern, fallback=None):
+    """Find the most recent file matching the pattern, or return fallback file if none found.
+    
+    Args:
+        pattern: Glob pattern to match files (e.g., "BD/BD_CADASTRO_PN_*.xlsx")
+        fallback: Fallback filename if no dated file is found (e.g., "BD/BD_CADASTRO_PN.xlsx")
+        
+    Returns:
+        str: Path to the latest file, or fallback, or None
+    """
+    files = glob.glob(pattern)
+    if files:
+        # Sort by modification time, newest first
+        files.sort(key=os.path.getmtime, reverse=True)
+        return files[0]
+    elif fallback and os.path.exists(fallback):
+        return fallback
+    return None
 
 # Lista global para coletar erros e avisos para mostrar ao usuário
 erros_processamento = []
@@ -552,8 +573,21 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
             template['COD DESTINO'] = template['COD DESTINO'].astype(str).str.replace(r'\.0$', '', regex=True)
         
         
-        BD_PN = os.path.join(caminho_base,caminho_BD,"BD_CADASTRO_PN.xlsx")
-        BD_MDR = os.path.join(caminho_base,caminho_BD,"BD_CADASTRO_MDR.xlsx")
+        # Use pattern matching to find latest dated files, with fallback to non-dated versions
+        BD_PN = get_latest_file(
+            os.path.join(caminho_base, caminho_BD, "BD_CADASTRO_PN_*.xlsx"),
+            fallback=os.path.join(caminho_base, caminho_BD, "BD_CADASTRO_PN.xlsx")
+        )
+        BD_MDR = get_latest_file(
+            os.path.join(caminho_base, caminho_BD, "BD_CADASTRO_MDR_*.xlsx"),
+            fallback=os.path.join(caminho_base, caminho_BD, "BD_CADASTRO_MDR.xlsx")
+        )
+        
+        if BD_PN is None:
+            raise FileNotFoundError("BD_CADASTRO_PN file not found. Please ensure database files are available.")
+        if BD_MDR is None:
+            raise FileNotFoundError("BD_CADASTRO_MDR file not found. Please ensure database files are available.")
+        
         VEÍCULOS = os.path.join(caminho_base,caminho_BD,"VEÍCULOS.xlsx")
         db_empilhamento = os.path.join(caminho_base,caminho_BD,"BD_EMPILHAMENTO_EMBALAGENS.xlsx")
         db_efi = os.path.join(caminho_base,caminho_BD,"BD_CADASTRO_MDR_PERDA_COMPRIMENTO.xlsx")
