@@ -157,6 +157,7 @@ def Processar_Demandas(cod_destino, pasta_demandas="Demandas", sheet_name=None):
                     df_temp = pd.DataFrame(dados_arquivo_atual)
                     if cod_destino is not None:
                         df_temp["COD DESTINO"] = cod_destino
+                    df_temp['IS_FLECHINHA'] = 0  # .txt files are NOT flechinha
                     lista_dfs.append(df_temp)
 
             # --- NOVA LÓGICA PARA PROCESSAR ARQUIVOS EXCEL (.XLS, .XLSX) ---
@@ -192,7 +193,10 @@ def Processar_Demandas(cod_destino, pasta_demandas="Demandas", sheet_name=None):
                 if cod_destino is not None:
                     df_temp = df_temp[df_temp['COD DESTINO'].astype(str) == str(cod_destino)]
 
-                # 4. Adiciona o DataFrame processado à lista para concatenação posterior
+                # 4. Marca como NÃO FLECHINHA (Excel normal, não saturação)
+                df_temp['IS_FLECHINHA'] = 0
+                
+                # 5. Adiciona o DataFrame processado à lista para concatenação posterior
                 lista_dfs.append(df_temp)
                 
             elif nome_arquivo_lower.endswith((".xls", ".xlsx")) and ("saturação" in nome_arquivo_lower or "saturacao" in nome_arquivo_lower)  and not nome_arquivo_lower.startswith("~$"):
@@ -273,7 +277,10 @@ def Processar_Demandas(cod_destino, pasta_demandas="Demandas", sheet_name=None):
                 if cod_destino is not None:
                     df_temp["COD DESTINO"] = cod_destino
                 
-                # 4. Adiciona o DataFrame processado à lista para concatenação posterior
+                # 6. Marca como FLECHINHA (saturação file)
+                df_temp['IS_FLECHINHA'] = 1
+                
+                # 7. Adiciona o DataFrame processado à lista para concatenação posterior
                 lista_dfs.append(df_temp)
 
         except Exception as e:
@@ -743,9 +750,13 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
         if 'MOT' not in template.columns:
             template['MOT'] = None
         
+        # Add FLECHINHA column if exists in template (from Template.xlsx)
+        if 'FLECHINHA' not in template.columns:
+            template['FLECHINHA'] = 0
+        
         template = template[['COD FORNECEDOR', 'FORNECEDOR', 'COD DESTINO', 'DESENHO', 'QTDE', 'DESCRIÇÃO MATERIAL',
                              'MDR', 'DESCRIÇÃO DA EMBALAGEM', 'QME', 'QTD EMBALAGENS', 'TIPO SATURACAO',
-                             'VEICULO', 'MOT', 'M³', 'PESO MAT', 'PESO MDR', 'PESO TOTAL', 'PESO_MAXIMO']]
+                             'VEICULO', 'MOT', 'FLECHINHA', 'M³', 'PESO MAT', 'PESO MDR', 'PESO TOTAL', 'PESO_MAXIMO']]
         
         # --- CT Validation: Filter rows based on MOT and PN_Conta_trabalho ---
         template['INCLUDE_IN_CALC'] = True  # Default: include all
@@ -825,6 +836,12 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
         duplicates_before = len(template)
         template = template.drop_duplicates(subset=['COD FORNECEDOR', 'COD DESTINO', 'DESENHO']).reset_index(drop=True)
     
+        # --- Filter out FLECHINHA == 1 AND COD DESTINO == 1080 ---
+        rows_before_flechinha_filter = len(template)
+        template = template[~((template['FLECHINHA'] == 1) & (template['COD DESTINO'] == '1080'))].reset_index(drop=True)
+        rows_removed_flechinha = rows_before_flechinha_filter - len(template)
+        if rows_removed_flechinha > 0:
+            adicionar_erro(f"{rows_removed_flechinha} linha(s) removida(s) (FLECHINHA=1 e COD DESTINO=1080)", "INFO")
        
         # --- Construção da aba Saturação ---
         df_saturacao = (
@@ -1280,6 +1297,7 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
             'TIPO SATURACAO': 90,
             'VEICULO': 70,
             'MOT': 60,
+            'FLECHINHA': 80,
             'M³': 60,
             'PESO MAT': 90,
             'PESO MDR': 90,

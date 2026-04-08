@@ -280,6 +280,7 @@ def input_demanda(cod_destinos, use_all_codes=False, sheet_name=None, use_manual
         for _, row in df.iterrows():
             cod_forn = str(row["COD FORNECEDOR"]).strip() if pd.notna(row.get("COD FORNECEDOR")) else None
             cod_ims_from_file = str(row.get("COD IMS", "")).strip() if pd.notna(row.get("COD IMS")) else None
+            is_flechinha = int(row.get("IS_FLECHINHA", 0))
            
 
             matched_cod_forn = cod_forn  # usar o original se não encontrar match
@@ -292,15 +293,15 @@ def input_demanda(cod_destinos, use_all_codes=False, sheet_name=None, use_manual
 
                 # Pega o COD IMS do fluxo (pode estar na coluna COD IMS)
                 fluxo_cod_ims = str(linha_fluxo.get("COD IMS", "")).strip() if pd.notna(linha_fluxo.get("COD IMS")) else None
+                fluxo_has_ims = fluxo_cod_ims and fluxo_cod_ims != '' and fluxo_cod_ims != '0'
                 
-               
                 # Match por COD FORNECEDOR ou por COD IMS
                 match_fornecedor = cod_forn and cod_forn in fornecedor_str
-               
+                match_ims = cod_ims_from_file and fluxo_cod_ims and cod_ims_from_file in fluxo_cod_ims
                 
-                match_ims = cod_ims_from_file and fluxo_cod_ims and cod_ims_from_file in fluxo_cod_ims # for partial match
-                
-                # match_ims = cod_ims_from_file and fluxo_cod_ims and cod_ims_from_file == fluxo_cod_ims   #// for exact match
+                # For REGULAR demands (FLECHINHA=0): Skip if FLUXO has COD IMS AND destination is 1046
+                if is_flechinha == 0 and fluxo_has_ims and cods_dest_raw == '1046':
+                    continue  # Skip this FLUXO row (reserved for flechinha to 1046)
                
                 if match_fornecedor or match_ims:
                     matched_any = True
@@ -324,7 +325,8 @@ def input_demanda(cod_destinos, use_all_codes=False, sheet_name=None, use_manual
                             "QTDE": row["QTDE"],
                             "VEICULO": codigo,
                             "TIPO SATURACAO": tipo,
-                            "MOT": mot
+                            "MOT": mot,
+                            "FLECHINHA": is_flechinha
                         })
                         # DEBUG: Track 800036730
                         if cod_forn == '800036730':
@@ -351,7 +353,8 @@ def input_demanda(cod_destinos, use_all_codes=False, sheet_name=None, use_manual
                     "QTDE": row["QTDE"],
                     "VEICULO": None,
                     "TIPO SATURACAO": None,
-                    "MOT": None
+                    "MOT": None,
+                    "FLECHINHA": is_flechinha
                 })
     else:
         # ensure cod_destinos is a list of strings
@@ -372,6 +375,7 @@ def input_demanda(cod_destinos, use_all_codes=False, sheet_name=None, use_manual
             for _, row in df.iterrows():
                 cod_forn = str(row["COD FORNECEDOR"]).strip() if pd.notna(row.get("COD FORNECEDOR")) else None
                 cod_ims_from_file = str(row.get("COD IMS", "")).strip() if pd.notna(row.get("COD IMS")) else None
+                is_flechinha = int(row.get("IS_FLECHINHA", 0))
                 
                 # Check if this is Flechinho data (COD FORNECEDOR = COD IMS)
                 is_flechinho = cod_forn and cod_ims_from_file and cod_forn == cod_ims_from_file
@@ -396,6 +400,11 @@ def input_demanda(cod_destinos, use_all_codes=False, sheet_name=None, use_manual
                     
                     # Pega o COD IMS do fluxo (pode estar na coluna COD IMS)
                     fluxo_cod_ims = str(linha_fluxo.get("COD IMS", "")).strip() if pd.notna(linha_fluxo.get("COD IMS")) else None
+                    fluxo_has_ims = fluxo_cod_ims and fluxo_cod_ims != '' and fluxo_cod_ims != '0'
+
+                    # For REGULAR demands (FLECHINHA=0): Skip if FLUXO has COD IMS AND destination is 1046
+                    if is_flechinha == 0 and fluxo_has_ims and cods_dest_raw == '1046':
+                        continue  # Skip this FLUXO row (reserved for flechinha to 1046)
 
                     # Match logic: EXACT for Flechinho, CONTAINS for others
                     if is_flechinho:
@@ -438,7 +447,8 @@ def input_demanda(cod_destinos, use_all_codes=False, sheet_name=None, use_manual
                         "QTDE": row["QTDE"],
                         "VEICULO": codigo,
                         "TIPO SATURACAO": tipo,
-                        "MOT": mot
+                        "MOT": mot,
+                        "FLECHINHA": is_flechinha
                     })
                     # DEBUG: Track 800036730
                     if cod_forn == '800036730':
