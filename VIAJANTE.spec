@@ -5,7 +5,7 @@ a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[('C:/Users/perna/Desktop/STALLANTIS/VIAJANTE/Viajante/carreta.png', '.')],
+    datas=[('carreta.png', '.'), ('Update DataBase', 'Update DataBase'), ('BD/.env', 'BD')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
@@ -35,5 +35,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=['C:\\Users\\perna\\Desktop\\STALLANTIS\\VIAJANTE\\Viajante\\Viajante.ico'],
+    icon=['Viajante.ico'],
 )

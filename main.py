@@ -842,7 +842,10 @@ def update_progress_callback(message):
 
 def check_database_updates():
     """Check and update database files in a thread"""
-    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'Update DataBase'))
+    # Use resource_path to handle both dev and PyInstaller paths
+    update_db_path = resource_path('Update DataBase')
+    if update_db_path not in sys.path:
+        sys.path.insert(0, update_db_path)
     try:
         from Update_Manager import check_and_update_files
         

@@ -3,29 +3,76 @@ Update Manager - Checks file ages and triggers SharePoint downloads when needed
 """
 import os
 import glob
+import re
 from datetime import datetime, timedelta
 import sys
 
+# PyInstaller-compatible path resolution
+if getattr(sys, 'frozen', False):
+    # Running from PyInstaller .exe
+    script_dir = sys._MEIPASS
+else:
+    # Running from source
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+
 # Add current directory to path for imports
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+if script_dir not in sys.path:
+    sys.path.insert(0, script_dir)
 
 def get_file_age_days(filepath):
-    """Get the age of a file in days"""
+    """Get the age of a file in days based on the date in the filename
+    
+    Expects filename format: FILENAME_YYYY-MM-DD.extension
+    Falls back to file modification time if date cannot be parsed from filename.
+    """
     if not os.path.exists(filepath):
         return None
     
+    # Try to extract date from filename (format: FILENAME_YYYY-MM-DD.extension)
+    filename = os.path.basename(filepath)
+    date_match = re.search(r'(\d{4})-(\d{2})-(\d{2})', filename)
+    
+    if date_match:
+        try:
+            # Parse date from filename
+            year, month, day = map(int, date_match.groups())
+            file_date = datetime(year, month, day)
+            age = datetime.now() - file_date
+            return age.days
+        except (ValueError, TypeError):
+            pass  # Fall back to modification time
+    
+    # Fallback: use file modification time
     modified_time = os.path.getmtime(filepath)
     modified_date = datetime.fromtimestamp(modified_time)
     age = datetime.now() - modified_date
     return age.days
 
 def get_latest_file(pattern):
-    """Get the most recent file matching the pattern"""
+    """Get the most recent file matching the pattern based on date in filename
+    
+    Expects filename format: FILENAME_YYYY-MM-DD.extension
+    Falls back to file modification time if date cannot be parsed.
+    """
     files = glob.glob(pattern)
     if not files:
         return None
-    # Sort by modification time, newest first
-    files.sort(key=os.path.getmtime, reverse=True)
+    
+    def extract_date_from_filename(filepath):
+        """Extract date from filename for sorting"""
+        filename = os.path.basename(filepath)
+        date_match = re.search(r'(\d{4})-(\d{2})-(\d{2})', filename)
+        if date_match:
+            try:
+                year, month, day = map(int, date_match.groups())
+                return datetime(year, month, day)
+            except (ValueError, TypeError):
+                pass
+        # Fallback to modification time
+        return datetime.fromtimestamp(os.path.getmtime(filepath))
+    
+    # Sort by date extracted from filename, newest first
+    files.sort(key=extract_date_from_filename, reverse=True)
     return files[0]
 
 def needs_update(file_pattern, max_age_days=5):
@@ -65,10 +112,15 @@ def check_and_update_files(max_age_days=5, force_update=False, silent=False, pro
     Returns:
         dict: Results of the update process
     """
-    # Get the project root directory (parent of Update DataBase)
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    project_root = os.path.dirname(script_dir)
-    bd_folder = os.path.join(project_root, "BD")
+    # Get the BD folder path (different for PyInstaller .exe vs source)
+    if getattr(sys, 'frozen', False):
+        # Running from .exe - BD folder is alongside the executable
+        bd_folder = os.path.join(os.path.dirname(sys.executable), "BD")
+    else:
+        # Running from source - BD folder is in parent directory
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        project_root = os.path.dirname(script_dir)
+        bd_folder = os.path.join(project_root, "BD")
     
     files_to_check = {
         "BD_CADASTRO_PN": os.path.join(bd_folder, "BD_CADASTRO_PN_*.xlsx"),

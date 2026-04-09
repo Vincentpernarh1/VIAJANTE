@@ -1,12 +1,25 @@
 import dotenv
 import os
+import sys
 from playwright.sync_api import sync_playwright
 from datetime import datetime
 import shutil
 
+# PyInstaller-compatible path resolution
+if getattr(sys, 'frozen', False):
+    # Running from PyInstaller .exe
+    script_dir = sys._MEIPASS
+else:
+    # Running from source
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+
 # Load environment variables using absolute path
-script_dir = os.path.dirname(os.path.abspath(__file__))
-env_path = os.path.join(script_dir, "..", "BD", ".env")
+env_path = os.path.join(script_dir, "BD", ".env")
+if not os.path.exists(env_path):
+    # Fallback for source code structure
+    env_path = os.path.join(script_dir, "..", "BD", ".env")
+    env_path = os.path.abspath(env_path)
+
 dotenv.load_dotenv(dotenv_path=env_path)
 sharepoint_url = os.getenv("SHAREPOINT_URL")
 
@@ -15,10 +28,15 @@ if not sharepoint_url:
 
 print(f"SharePoint URL: {sharepoint_url}")
 
-# Create the download folder path - use script directory as base
+# Create the download folder path - BD folder should be alongside the .exe or in source structure
 current_date = datetime.now().strftime("%Y-%m-%d")
-download_folder = os.path.join(script_dir, "..", "BD")
-download_folder = os.path.abspath(download_folder)
+if getattr(sys, 'frozen', False):
+    # When running from .exe, BD folder is alongside the executable
+    download_folder = os.path.join(os.path.dirname(sys.executable), "BD")
+else:
+    # When running from source
+    download_folder = os.path.join(script_dir, "..", "BD")
+    download_folder = os.path.abspath(download_folder)
 
 # Ensure the download folder exists
 os.makedirs(download_folder, exist_ok=True)
