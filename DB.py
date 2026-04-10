@@ -813,9 +813,18 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
                         except (ValueError, TypeError):
                             desenho_str = str(desenho_val).strip() if pd.notna(desenho_val) else ''
                         
-                        key = (cod_ims_str, desenho_str)  # (COD_IMS, DESENHO)
+                        # Handle compound COD IMS (e.g., "24149/36190")
+                        # Check if ANY part of the compound IMS matches in the CT lookup
+                        cod_ims_parts = [p.strip() for p in cod_ims_str.split('/')]
                         
-                        if key not in pn_ct_lookup:
+                        is_in_ct = False
+                        for ims_part in cod_ims_parts:
+                            key = (ims_part, desenho_str)  # (COD_IMS_PART, DESENHO)
+                            if key in pn_ct_lookup:
+                                is_in_ct = True
+                                break
+                        
+                        if not is_in_ct:
                             # PN not in CT file, exclude from CT calculation
                             template.at[idx, 'INCLUDE_IN_CALC'] = False
                             ct_excluded_count += 1
@@ -844,9 +853,18 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
                         except (ValueError, TypeError):
                             desenho_str = str(desenho_val).strip() if pd.notna(desenho_val) else ''
                         
-                        key = (cod_ims_str, desenho_str)  # (COD_IMS, DESENHO)
+                        # Handle compound COD IMS (e.g., "24149/36190")
+                        # Check if ANY part of the compound IMS matches in the CT lookup
+                        cod_ims_parts = [p.strip() for p in cod_ims_str.split('/')]
                         
-                        if key in pn_ct_lookup:
+                        is_in_ct = False
+                        for ims_part in cod_ims_parts:
+                            key = (ims_part, desenho_str)  # (COD_IMS_PART, DESENHO)
+                            if key in pn_ct_lookup:
+                                is_in_ct = True
+                                break
+                        
+                        if is_in_ct:
                             # PN is in CT file for this COD IMS, so exclude from FTL calculation
                             template.at[idx, 'INCLUDE_IN_CALC'] = False
                             ftl_excluded_count += 1

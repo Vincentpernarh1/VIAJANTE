@@ -195,6 +195,9 @@ def input_demanda(cod_destinos, use_all_codes=False, sheet_name=None, use_manual
     fluxos = os.path.join(caminho_base, "BD", "FLUXO.xlsx")
     db_fluxos = pd.read_excel(fluxos, sheet_name='FLUXOS')
     
+    # DEBUG: Track specific PN
+    DEBUG_PN = 520820720
+    
     # Load PN_Conta_trabalho for CT filtering during template creation
     pn_ct_lookup = set()  # Will store (FORNECEDOR/COD_IMS, DESENHO) pairs
     try:
@@ -237,6 +240,7 @@ def input_demanda(cod_destinos, use_all_codes=False, sheet_name=None, use_manual
         - If MOT=CT: include only if (cod_ims, desenho) IS in pn_ct_lookup
         - If MOT=FTL/LTL: include only if (cod_ims, desenho) NOT in pn_ct_lookup
         - If no COD IMS or no valid MOT: include by default (skip CT filtering)
+        - Handles compound COD IMS like "24149/36190" by checking each part
         """
         if len(pn_ct_lookup) == 0:
             return True  # No CT data, include everything
@@ -263,8 +267,16 @@ def input_demanda(cod_destinos, use_all_codes=False, sheet_name=None, use_manual
         except (ValueError, TypeError):
             des_str = str(desenho).strip()
         
-        key = (cod_ims_str, des_str)  # (COD_IMS, DESENHO)
-        is_in_ct = key in pn_ct_lookup
+        # Handle compound COD IMS (e.g., "24149/36190")
+        # Check if ANY part of the compound IMS matches in the CT lookup
+        cod_ims_parts = [p.strip() for p in cod_ims_str.split('/')]
+        
+        is_in_ct = False
+        for ims_part in cod_ims_parts:
+            key = (ims_part, des_str)  # (COD_IMS_PART, DESENHO)
+            if key in pn_ct_lookup:
+                is_in_ct = True
+                break
         
         if mot_upper == 'CT':
             return is_in_ct  # CT: include only if in CT lookup
@@ -277,11 +289,26 @@ def input_demanda(cod_destinos, use_all_codes=False, sheet_name=None, use_manual
         # Process all demand rows without filtering by COD DESTINO
         df = Processar_Demandas(None, sheet_name=sheet_name)
         
+        print(f"\n[DEBUG] Processing {len(df)} demand rows...")
+        debug_found = df[df['DESENHO'] == DEBUG_PN]
+        if len(debug_found) > 0:
+            print(f"[DEBUG] ✓ Found PN {DEBUG_PN} in demands ({len(debug_found)} times)")
+            print(debug_found[['DESENHO', 'COD FORNECEDOR', 'COD IMS', 'QTDE']].to_string(index=False))
+        else:
+            print(f"[DEBUG] ✗ PN {DEBUG_PN} NOT in demand files")
+        
         for _, row in df.iterrows():
             cod_forn = str(row["COD FORNECEDOR"]).strip() if pd.notna(row.get("COD FORNECEDOR")) else None
             cod_ims_from_file = str(row.get("COD IMS", "")).strip() if pd.notna(row.get("COD IMS")) else None
             is_flechinha = int(row.get("IS_FLECHINHA", 0))
            
+            # DEBUG: Track specific PN
+            if row["DESENHO"] == DEBUG_PN:
+                print(f"\n[DEBUG] Processing PN {DEBUG_PN}:")
+                print(f"  COD FORNECEDOR: {cod_forn}")
+                print(f"  COD IMS from file: {cod_ims_from_file}")
+                print(f"  QTDE: {row['QTDE']}")
+                print(f"  IS_FLECHINHA: {is_flechinha}")
 
             matched_cod_forn = cod_forn  # usar o original se não encontrar match
             matched_any = False
@@ -299,8 +326,15 @@ def input_demanda(cod_destinos, use_all_codes=False, sheet_name=None, use_manual
                 match_fornecedor = cod_forn and cod_forn in fornecedor_str
                 match_ims = cod_ims_from_file and fluxo_cod_ims and cod_ims_from_file in fluxo_cod_ims
                 
+                # DEBUG: Track matching for specific PN
+                if row["DESENHO"] == DEBUG_PN and (match_fornecedor or match_ims):
+                    print(f"  [MATCH] Fluxo: Forn={fornecedor_str}, Dest={cods_dest_raw}, IMS={fluxo_cod_ims}")
+                    print(f"    match_fornecedor={match_fornecedor}, match_ims={match_ims}")
+                
                 # For REGULAR demands (FLECHINHA=0): Skip if FLUXO has COD IMS AND destination is 1046
                 if is_flechinha == 0 and fluxo_has_ims and cods_dest_raw == '1046':
+                    if row["DESENHO"] == DEBUG_PN:
+                        print(f"  [SKIP] Skipping FLUXO with IMS={fluxo_cod_ims} and dest=1046 (reserved for flechinha)")
                     continue  # Skip this FLUXO row (reserved for flechinha to 1046)
                
                 if match_fornecedor or match_ims:
@@ -317,7 +351,14 @@ def input_demanda(cod_destinos, use_all_codes=False, sheet_name=None, use_manual
                     
                     # Filter: only include if PN belongs to this MOT (CT or FTL)
                     cod_ims_for_check = fluxo_cod_ims_val or cod_ims_from_file
-                    if should_include_pn(row["DESENHO"], cod_dest_full, mot, cod_ims_for_check):
+                    should_include = should_include_pn(row["DESENHO"], cod_dest_full, mot, cod_ims_for_check)
+                    
+                    # DEBUG: Track filtering decision
+                    if row["DESENHO"] == DEBUG_PN:
+                        print(f"  MOT={mot}, COD_IMS={cod_ims_for_check}, DESTINO={cod_dest_full}")
+                        print(f"  should_include_pn returned: {should_include}")
+                    
+                    if should_include:
                         all_rows.append({
                             "COD FORNECEDOR": matched_fornecedor_to_use,
                             "COD IMS": fluxo_cod_ims_val or cod_ims_from_file,
@@ -334,6 +375,10 @@ def input_demanda(cod_destinos, use_all_codes=False, sheet_name=None, use_manual
                         
             # If no fluxo match was found for this demand row, still append a row indicating missing fornecedor
             if not matched_any:
+                if row["DESENHO"] == DEBUG_PN:
+                    print(f"  [NO MATCH] No FLUXO matched for PN {DEBUG_PN}")
+                    print(f"    Will create row with no destination/vehicle")
+                
                 all_rows.append({
                     "COD FORNECEDOR": matched_cod_forn,
                     "COD IMS": cod_ims_from_file,
@@ -432,6 +477,14 @@ def input_demanda(cod_destinos, use_all_codes=False, sheet_name=None, use_manual
 
    
     df_final = pd.DataFrame(all_rows).drop_duplicates().reset_index(drop=True)
+    
+    # DEBUG: Final check
+    if DEBUG_PN in df_final['DESENHO'].values:
+        print(f"\n[DEBUG] ✓ PN {DEBUG_PN} MADE IT to final template ({len(df_final[df_final['DESENHO'] == DEBUG_PN])} rows)")
+        print(df_final[df_final['DESENHO'] == DEBUG_PN][['DESENHO', 'COD FORNECEDOR', 'COD IMS', 'COD DESTINO', 'MOT']].to_string(index=False))
+    else:
+        print(f"\n[DEBUG] ✗ PN {DEBUG_PN} NOT in final template")
+        print(f"  Total rows in template: {len(df_final)}")
    
     # If user chose to force a manual vehicle, override the VEICULO column
     if use_manual and manual_veiculo is not None:
