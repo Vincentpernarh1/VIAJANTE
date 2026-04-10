@@ -620,7 +620,7 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
         db_efi = pd.read_excel(db_efi,sheet_name='BD')
         
         # --- Load PN_Conta_trabalho for CT validation ---
-        pn_ct_lookup = set()
+        pn_ct_lookup = set()  # Will store (FORNECEDOR, DESENHO) pairs
         try:
             if os.path.exists(PN_CT_path):
                 db_pn_ct = pd.read_excel(PN_CT_path)
@@ -635,24 +635,24 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
                     elif 'DESTINO' in col_upper:
                         col_map['DESTINO'] = col
                 
-                # Only need DESENHO and DESTINO columns for CT matching
-                if all(k in col_map for k in ['DESENHO', 'DESTINO']):
+                # Need FORNECEDOR and DESENHO columns for CT matching
+                if all(k in col_map for k in ['FORNECEDOR', 'DESENHO']):
                     for _, row in db_pn_ct.iterrows():
                         # Normalize to string and remove .0 from floats
-                        # CT matching uses only DESTINO-DESENHO (ignores Fornecedor)
+                        # CT matching uses FORNECEDOR (COD IMS) + DESENHO
                         try:
-                            dest = str(int(float(row[col_map['DESTINO']]))) if pd.notna(row[col_map['DESTINO']]) else ''
+                            forn = str(int(float(row[col_map['FORNECEDOR']]))) if pd.notna(row[col_map['FORNECEDOR']]) else ''
                         except (ValueError, TypeError):
-                            dest = str(row[col_map['DESTINO']]).strip()
+                            forn = str(row[col_map['FORNECEDOR']]).strip()
                         
                         try:
                             desenho = str(int(float(row[col_map['DESENHO']]))) if pd.notna(row[col_map['DESENHO']]) else ''
                         except (ValueError, TypeError):
                             desenho = str(row[col_map['DESENHO']]).strip()
                         
-                        if dest and desenho:
-                            pn_ct_lookup.add((dest, desenho))  # Only (DESTINO, DESENHO)
-                    # print(f"[INFO] Loaded {len(pn_ct_lookup)} Destino-Desenho combinations from PN_Conta_trabalho.xlsx")
+                        if forn and desenho:
+                            pn_ct_lookup.add((forn, desenho))  # (FORNECEDOR/COD_IMS, DESENHO)
+                    # print(f"[INFO] Loaded {len(pn_ct_lookup)} Fornecedor-Desenho combinations from PN_Conta_trabalho.xlsx")
                 else:
                     adicionar_erro("PN_Conta_trabalho.xlsx: Colunas esperadas não encontradas", "AVISO")
         except Exception as e:
@@ -792,14 +792,20 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
                 mot_upper = str(mot).strip().upper() if pd.notna(mot) else ''
                 
                 if mot_upper == 'CT':
-                    # For CT rows, check if (DESTINO, DESENHO) exists in pn_ct_lookup
+                    # For CT rows, check if (COD_IMS, DESENHO) exists in pn_ct_lookup
                     # Include only if found in PN_Conta_trabalho
                     for idx, row in group.iterrows():
-                        # Normalize to match PN_CT format (remove .0 from numbers)
+                        # Get COD IMS for lookup (this is the Fornecedor in PN_Conta_trabalho)
+                        cod_ims = row.get('COD IMS', None)
                         try:
-                            dest_str = str(int(float(dest))) if pd.notna(dest) else ''
+                            cod_ims_str = str(int(float(cod_ims))) if pd.notna(cod_ims) else ''
                         except (ValueError, TypeError):
-                            dest_str = str(dest).strip()
+                            cod_ims_str = str(cod_ims).strip() if cod_ims else ''
+                        
+                        # Skip CT filtering if no COD IMS (include by default)
+                        if not cod_ims_str:
+                            ct_included_count += 1
+                            continue
                         
                         try:
                             desenho_val = row['DESENHO']
@@ -807,7 +813,7 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
                         except (ValueError, TypeError):
                             desenho_str = str(desenho_val).strip() if pd.notna(desenho_val) else ''
                         
-                        key = (dest_str, desenho_str)  # Only (DESTINO, DESENHO)
+                        key = (cod_ims_str, desenho_str)  # (COD_IMS, DESENHO)
                         
                         if key not in pn_ct_lookup:
                             # PN not in CT file, exclude from CT calculation
@@ -816,15 +822,21 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
                         else:
                             ct_included_count += 1
                 
-                elif mot_upper in ['FTL', 'LTL'] or mot_upper != 'CT':
-                    # For FTL/LTL/other MOT rows, EXCLUDE if (DESTINO, DESENHO) exists in pn_ct_lookup
-                    # This prevents PNs from appearing in both CT and FTL for same supplier
+                elif mot_upper in ['FTL', 'LTL']:
+                    # For FTL/LTL rows, EXCLUDE if (COD_IMS, DESENHO) exists in pn_ct_lookup
+                    # This prevents CT PNs from appearing in FTL for the same COD IMS
                     for idx, row in group.iterrows():
-                        # Normalize to match PN_CT format
+                        # Get COD IMS for lookup
+                        cod_ims = row.get('COD IMS', None)
                         try:
-                            dest_str = str(int(float(dest))) if pd.notna(dest) else ''
+                            cod_ims_str = str(int(float(cod_ims))) if pd.notna(cod_ims) else ''
                         except (ValueError, TypeError):
-                            dest_str = str(dest).strip()
+                            cod_ims_str = str(cod_ims).strip() if cod_ims else ''
+                        
+                        # Skip CT filtering if no COD IMS (include by default)
+                        if not cod_ims_str:
+                            ftl_included_count += 1
+                            continue
                         
                         try:
                             desenho_val = row['DESENHO']
@@ -832,14 +844,15 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
                         except (ValueError, TypeError):
                             desenho_str = str(desenho_val).strip() if pd.notna(desenho_val) else ''
                         
-                        key = (dest_str, desenho_str)
+                        key = (cod_ims_str, desenho_str)  # (COD_IMS, DESENHO)
                         
                         if key in pn_ct_lookup:
-                            # PN is in CT file, so exclude from FTL calculation
+                            # PN is in CT file for this COD IMS, so exclude from FTL calculation
                             template.at[idx, 'INCLUDE_IN_CALC'] = False
                             ftl_excluded_count += 1
                         else:
                             ftl_included_count += 1
+                # Else: MOT is NaN or other value - skip CT filtering (include by default)
             
             if ct_excluded_count > 0:
                 adicionar_erro(f"{ct_excluded_count} PN(s) com MOT=CT excluídos (não encontrados em PN_Conta_trabalho)", "INFO")

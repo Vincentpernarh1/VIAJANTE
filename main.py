@@ -196,7 +196,7 @@ def input_demanda(cod_destinos, use_all_codes=False, sheet_name=None, use_manual
     db_fluxos = pd.read_excel(fluxos, sheet_name='FLUXOS')
     
     # Load PN_Conta_trabalho for CT filtering during template creation
-    pn_ct_lookup = set()
+    pn_ct_lookup = set()  # Will store (FORNECEDOR/COD_IMS, DESENHO) pairs
     try:
         pn_ct_path = os.path.join(caminho_base, "BD", "PN_Conta_trabalho.xlsx")
         if os.path.exists(pn_ct_path):
@@ -205,58 +205,71 @@ def input_demanda(cod_destinos, use_all_codes=False, sheet_name=None, use_manual
             col_map = {}
             for col in db_pn_ct.columns:
                 col_upper = str(col).upper().strip()
-                if 'DESENHO' in col_upper:
+                if 'FORNECEDOR' in col_upper:
+                    col_map['FORNECEDOR'] = col
+                elif 'DESENHO' in col_upper:
                     col_map['DESENHO'] = col
                 elif 'DESTINO' in col_upper:
                     col_map['DESTINO'] = col
             
-            if all(k in col_map for k in ['DESENHO', 'DESTINO']):
+            if all(k in col_map for k in ['FORNECEDOR', 'DESENHO']):
                 for _, row in db_pn_ct.iterrows():
                     try:
-                        dest = str(int(float(row[col_map['DESTINO']]))) if pd.notna(row[col_map['DESTINO']]) else ''
+                        forn = str(int(float(row[col_map['FORNECEDOR']]))) if pd.notna(row[col_map['FORNECEDOR']]) else ''
                     except (ValueError, TypeError):
-                        dest = str(row[col_map['DESTINO']]).strip()
+                        forn = str(row[col_map['FORNECEDOR']]).strip()
                     
                     try:
                         desenho = str(int(float(row[col_map['DESENHO']]))) if pd.notna(row[col_map['DESENHO']]) else ''
                     except (ValueError, TypeError):
                         desenho = str(row[col_map['DESENHO']]).strip()
                     
-                    if dest and desenho:
-                        pn_ct_lookup.add((dest, desenho))
+                    if forn and desenho:
+                        pn_ct_lookup.add((forn, desenho))  # (FORNECEDOR/COD_IMS, DESENHO)
 
     except Exception as e:
         print(f"[WARNING] Could not load PN_Conta_trabalho: {e}")
     
     # Helper function to check if a PN should be included based on MOT and CT lookup
-    def should_include_pn(desenho, destino, mot):
+    def should_include_pn(desenho, destino, mot, cod_ims):
         """
         Returns True if this PN should be included in the template for the given MOT.
-        - If MOT=CT: include only if (destino, desenho) IS in pn_ct_lookup
-        - If MOT!=CT: include only if (destino, desenho) NOT in pn_ct_lookup
+        - If MOT=CT: include only if (cod_ims, desenho) IS in pn_ct_lookup
+        - If MOT=FTL/LTL: include only if (cod_ims, desenho) NOT in pn_ct_lookup
+        - If no COD IMS or no valid MOT: include by default (skip CT filtering)
         """
         if len(pn_ct_lookup) == 0:
             return True  # No CT data, include everything
         
-        # Normalize for lookup
+        # Normalize MOT
+        mot_upper = str(mot).strip().upper() if pd.notna(mot) else ''
+        
+        # Skip CT filtering if MOT is not CT or FTL/LTL
+        if mot_upper not in ['CT', 'FTL', 'LTL']:
+            return True  # Include by default
+        
+        # Normalize COD IMS for lookup
         try:
-            dest_str = str(int(float(destino))) if pd.notna(destino) else ''
+            cod_ims_str = str(int(float(cod_ims))) if pd.notna(cod_ims) else ''
         except (ValueError, TypeError):
-            dest_str = str(destino).strip()
+            cod_ims_str = str(cod_ims).strip() if cod_ims else ''
+        
+        # Skip CT filtering if no COD IMS
+        if not cod_ims_str:
+            return True  # Include by default
         
         try:
             des_str = str(int(float(desenho))) if pd.notna(desenho) else ''
         except (ValueError, TypeError):
             des_str = str(desenho).strip()
         
-        key = (dest_str, des_str)
+        key = (cod_ims_str, des_str)  # (COD_IMS, DESENHO)
         is_in_ct = key in pn_ct_lookup
-        mot_upper = str(mot).strip().upper() if pd.notna(mot) else ''
         
         if mot_upper == 'CT':
             return is_in_ct  # CT: include only if in CT lookup
-        else:
-            return not is_in_ct  # FTL/other: include only if NOT in CT lookup
+        else:  # FTL or LTL
+            return not is_in_ct  # FTL/LTL: include only if NOT in CT lookup
     
     all_rows = []  # collect all rows here
 
@@ -303,7 +316,8 @@ def input_demanda(cod_destinos, use_all_codes=False, sheet_name=None, use_manual
                     matched_fornecedor_to_use = fornecedor_str if (match_ims and not cod_forn) else matched_cod_forn
                     
                     # Filter: only include if PN belongs to this MOT (CT or FTL)
-                    if should_include_pn(row["DESENHO"], cod_dest_full, mot):
+                    cod_ims_for_check = fluxo_cod_ims_val or cod_ims_from_file
+                    if should_include_pn(row["DESENHO"], cod_dest_full, mot, cod_ims_for_check):
                         all_rows.append({
                             "COD FORNECEDOR": matched_fornecedor_to_use,
                             "COD IMS": fluxo_cod_ims_val or cod_ims_from_file,
@@ -402,7 +416,8 @@ def input_demanda(cod_destinos, use_all_codes=False, sheet_name=None, use_manual
                         break
 
                 # Only append if matched and PN belongs to this MOT
-                if matched and should_include_pn(row["DESENHO"], cod_dest_full, mot):
+                cod_ims_for_check = cod_ims or cod_ims_from_file
+                if matched and should_include_pn(row["DESENHO"], cod_dest_full, mot, cod_ims_for_check):
                     all_rows.append({
                         "COD FORNECEDOR": matched_cod_forn,
                         "COD IMS": cod_ims or cod_ims_from_file,
