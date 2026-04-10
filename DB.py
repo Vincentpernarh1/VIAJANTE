@@ -572,7 +572,6 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
         if 'COD DESTINO' in template.columns:
             template['COD DESTINO'] = template['COD DESTINO'].astype(str).str.replace(r'\.0$', '', regex=True)
         
-        
         # Use pattern matching to find latest dated files, with fallback to non-dated versions
         BD_PN = get_latest_file(
             os.path.join(caminho_base, caminho_BD, "BD_CADASTRO_PN_*.xlsx"),
@@ -668,7 +667,7 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
         
         
         db_PN = db_PN.sort_values('DESENHO ATUALIZAÇÃO', ascending=False)
-
+        
         # Criar chave composta DESENHO+MDR em db_PN
         db_PN['KEY'] = db_PN['DESENHO'].astype(str) + '_' + db_PN['MDR'].astype(str)
 
@@ -708,6 +707,7 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
         # Passo 1: primeiro trazer MDR pelo DESENHO, para podermos montar a KEY
         # Filter out nan MDR values and use most recent (already sorted by DESENHO ATUALIZAÇÃO)
         db_PN_valid_mdr = db_PN[db_PN['MDR'].notna()]
+        
         template['MDR'] = template['DESENHO'].map(
             db_PN_valid_mdr.drop_duplicates('DESENHO', keep='first').set_index('DESENHO')['MDR']
         )
@@ -737,7 +737,6 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
         template['MDR'] = template['KEY'].map(mapa_mdr)  # reforça MDR correto do KEY
         template['DESCRIÇÃO DA EMBALAGEM'] = template['MDR'].map(mapa_descricao_mdr)
         template['QME'] = template['KEY'].map(mapa_qme)
-
 
         # Ensure QME is valid (not zero, not NaN) before division
         template['QME'] = template['QME'].fillna(1)  # Replace NaN with 1 to avoid division issues
@@ -877,14 +876,27 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
 
         df_saturacao = df_saturacao.merge(col_veiculo, on=['COD FORNECEDOR', 'EMBALAGEM'], how='left')
 
-        mapa_paletizavel = db_MDR.drop_duplicates('MDR').set_index('MDR')['CAIXA PLÁSTICA']
-        mapa_cxs_por_pallet = db_MDR.drop_duplicates('MDR').set_index('MDR')['CAIXAS POR PALLET']
+        # Create mappings from db_MDR - filter out NaN values before deduplication
+        # to ensure we don't get empty/null values when valid values exist
+        db_MDR_valid_paletizavel = db_MDR[db_MDR['CAIXA PLÁSTICA'].notna()]
+        mapa_paletizavel = db_MDR_valid_paletizavel.drop_duplicates('MDR').set_index('MDR')['CAIXA PLÁSTICA']
+        
+        # For CAIXAS POR PALLET, filter out NaN and use the most common value (mode)
+        # This prevents picking the first row if it has NaN when other rows have valid values
+        db_MDR_valid_cxs = db_MDR[db_MDR['CAIXAS POR PALLET'].notna()]
+        
+        # Group by MDR and take the mode (most common value) for CAIXAS POR PALLET
+        # If multiple modes exist, take the first one
+        mapa_cxs_por_pallet = db_MDR_valid_cxs.groupby('MDR')['CAIXAS POR PALLET'].agg(
+            lambda x: x.mode()[0] if not x.mode().empty else x.iloc[0]
+        )
 
         df_saturacao['CX_PALETIZÁVEL'] = df_saturacao['EMBALAGEM'].map(mapa_paletizavel).fillna(0).astype(int)
         df_saturacao['CXS_POR_PALLET'] = df_saturacao.apply(
             lambda row: 1 if row['CX_PALETIZÁVEL'] != 1 else (
                 mapa_cxs_por_pallet.get(row['EMBALAGEM'], 1) or 1), axis=1
         )
+        
         df_saturacao['CXS/PALLETS_TOTAL'] = df_saturacao['TOTAL DE CXS'] / df_saturacao['CXS_POR_PALLET']
 
         # Mapeia de código do veículo (ex: 4) -> coluna de capacidade no db_MDR (ex: "14 x 2,4 x 2,78")
@@ -1100,6 +1112,8 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
                 proporcao = row['CXS/PALLETS_TOTAL'] / row['CAPACIDADE']
                 result = (proporcao + soma_saturacoes) * row['EFICIÊNCIA_COMPRIMENTO']
                 
+
+                
                 return result
 
             df_sat['SATURAÇÃO_TOTAL'] = df_sat.apply(calcular, axis=1)
@@ -1132,6 +1146,7 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
 
         # --- Cálculo da SAT por linha ---
         template.loc[:, 'CHAVE'] = template['COD FORNECEDOR'].astype(str) + '-' + template['MDR'].astype(str)
+        
         template = template.merge(df_saturacao[['CHAVE', 'SATURAÇÃO_POR_MDR']], on='CHAVE', how='left')
         
         # Clean up SATURAÇÃO_POR_MDR to avoid infinity values
@@ -1156,7 +1171,6 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
         # Filter to only include rows that should be in calculations
         template_calc = template[template['INCLUDE_IN_CALC']] if 'INCLUDE_IN_CALC' in template.columns else template
         
-    
         ocupacao = template_calc['SAT VOLUME (%)'].sum()
         qtd_veiculos = (ceil(ocupacao / 100))
         volume = template_calc['M³'].sum()
