@@ -289,13 +289,6 @@ def input_demanda(cod_destinos, use_all_codes=False, sheet_name=None, use_manual
         # Process all demand rows without filtering by COD DESTINO
         df = Processar_Demandas(None, sheet_name=sheet_name)
         
-        print(f"\n[DEBUG] Processing {len(df)} demand rows...")
-        debug_found = df[df['DESENHO'] == DEBUG_PN]
-        if len(debug_found) > 0:
-            print(f"[DEBUG] ✓ Found PN {DEBUG_PN} in demands ({len(debug_found)} times)")
-            print(debug_found[['DESENHO', 'COD FORNECEDOR', 'COD IMS', 'QTDE']].to_string(index=False))
-        else:
-            print(f"[DEBUG] ✗ PN {DEBUG_PN} NOT in demand files")
         
         for _, row in df.iterrows():
             cod_forn = str(row["COD FORNECEDOR"]).strip() if pd.notna(row.get("COD FORNECEDOR")) else None
@@ -375,9 +368,6 @@ def input_demanda(cod_destinos, use_all_codes=False, sheet_name=None, use_manual
                         
             # If no fluxo match was found for this demand row, still append a row indicating missing fornecedor
             if not matched_any:
-                if row["DESENHO"] == DEBUG_PN:
-                    print(f"  [NO MATCH] No FLUXO matched for PN {DEBUG_PN}")
-                    print(f"    Will create row with no destination/vehicle")
                 
                 all_rows.append({
                     "COD FORNECEDOR": matched_cod_forn,
@@ -478,13 +468,6 @@ def input_demanda(cod_destinos, use_all_codes=False, sheet_name=None, use_manual
    
     df_final = pd.DataFrame(all_rows).drop_duplicates().reset_index(drop=True)
     
-    # DEBUG: Final check
-    if DEBUG_PN in df_final['DESENHO'].values:
-        print(f"\n[DEBUG] ✓ PN {DEBUG_PN} MADE IT to final template ({len(df_final[df_final['DESENHO'] == DEBUG_PN])} rows)")
-        print(df_final[df_final['DESENHO'] == DEBUG_PN][['DESENHO', 'COD FORNECEDOR', 'COD IMS', 'COD DESTINO', 'MOT']].to_string(index=False))
-    else:
-        print(f"\n[DEBUG] ✗ PN {DEBUG_PN} NOT in final template")
-        print(f"  Total rows in template: {len(df_final)}")
    
     # If user chose to force a manual vehicle, override the VEICULO column
     if use_manual and manual_veiculo is not None:

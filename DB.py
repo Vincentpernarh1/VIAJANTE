@@ -278,7 +278,7 @@ def Processar_Demandas(cod_destino, pasta_demandas="Demandas", sheet_name=None):
                     
                 
                 # 4. COD FORNECEDOR sempre nulo para arquivos de saturação (será preenchido depois via COD IMS)
-                df_temp['COD FORNECEDOR'] = pd.NA
+                df_temp['COD FORNECEDOR'] = ""
                 # print(f"INFO: Coluna 'COD FORNECEDOR' definida como nula (será derivada de COD IMS).")
 
                 # 5. Adiciona a coluna COD DESTINO
@@ -303,6 +303,10 @@ def Processar_Demandas(cod_destino, pasta_demandas="Demandas", sheet_name=None):
     
     # Concatena todos os DataFrames da lista em um único DataFrame final
     df_final = pd.concat(lista_dfs, ignore_index=True)
+    
+    # Ensure COD IMS column always exists (for files without it, fill with NaN)
+    if 'COD IMS' not in df_final.columns:
+        df_final['COD IMS'] = pd.NA
 
     # Para arquivos de saturação, COD FORNECEDOR pode estar nulo
     # Neste caso, usamos COD IMS como COD FORNECEDOR
@@ -562,6 +566,10 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
         # --- Leitura dos arquivos ---
         template = pd.read_excel('Template.xlsx', dtype={'COD FORNECEDOR': int, 'DESENHO': str})
         template = template[template['QTDE'] > 0]
+        
+        # Ensure COD IMS column exists (for backward compatibility with files that don't have it)
+        if 'COD IMS' not in template.columns:
+            template['COD IMS'] = ""
         
         # Clean up COD FORNECEDOR to ensure it's integer without .0 suffix
         if 'COD FORNECEDOR' in template.columns:
@@ -1389,10 +1397,18 @@ def consolidar_dados(use_manual=False, manual_veiculo=None):
     fluxos_path = os.path.join(caminho_base, "BD", "FLUXO.xlsx")
     fluxos = pd.read_excel(fluxos_path, sheet_name='FLUXOS')
     
+    # Ensure COD IMS column exists in fluxos
+    if 'COD IMS' not in fluxos.columns:
+        fluxos['COD IMS'] = ""
+    
     template = pd.read_excel('VIAJANTE.xlsx', sheet_name='Template Completo')
 
     # Filtra linhas com quantidade válida e prepara as colunas
     template = template[template['QTDE'] > 0].copy()
+    
+    # Ensure COD IMS column exists (for backward compatibility)
+    if 'COD IMS' not in template.columns:
+        template['COD IMS'] = ""
     
     # Clean up COD FORNECEDOR - remove .0 suffix before converting to string
     template['COD FORNECEDOR'] = template['COD FORNECEDOR'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
