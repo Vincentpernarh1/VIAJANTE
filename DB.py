@@ -885,7 +885,7 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
         # Deduplicate after enrichment but before saturação calculations
         # This ensures all calculations (volume, peso, ocupação) are done on clean data
         duplicates_before = len(template)
-        template = template.drop_duplicates(subset=['COD FORNECEDOR', 'COD DESTINO', 'DESENHO']).reset_index(drop=True)
+        template = template.drop_duplicates(subset=['COD FORNECEDOR', 'COD DESTINO', 'DESENHO', 'QTDE']).reset_index(drop=True)
     
         # --- Filter out FLECHINHA == 1 AND COD DESTINO == 1080 ---
         rows_before_flechinha_filter = len(template)
@@ -1282,7 +1282,7 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
         # --- Second deduplication check before Excel write ---
         # Safety check in case any operations after calculations reintroduced duplicates
         duplicates_before_write = len(template)
-        template = template.drop_duplicates(subset=['COD FORNECEDOR', 'COD DESTINO', 'DESENHO']).reset_index(drop=True)
+        template = template.drop_duplicates(subset=['COD FORNECEDOR', 'COD DESTINO', 'DESENHO', 'QTDE']).reset_index(drop=True)
         duplicates_removed_write = duplicates_before_write - len(template)
         if duplicates_removed_write > 0:
             adicionar_erro(f"{duplicates_removed_write} linha(s) duplicada(s) removida(s) antes de salvar VIAJANTE", "INFO")
