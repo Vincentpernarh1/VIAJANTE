@@ -10,6 +10,12 @@ import os
 import sys
 import threading
 
+
+#------------------------------- COMERNTS --------------------------------- \\
+
+# 800012939/20812 Edcha - Viajante novo calcula volume da funilaria. Exemplo, edscha do viajante novo saiu volume maior do que do acionamento antigo porque esse ultimo não calculava o volume da funilaria. 
+
+
 def resource_path(relative_path):
     """Get absolute path to resource, works for dev and for PyInstaller"""
     if hasattr(sys, '_MEIPASS'):
@@ -326,8 +332,8 @@ def input_demanda(cod_destinos, use_all_codes=False, sheet_name=None, use_manual
                 
                 # For REGULAR demands (FLECHINHA=0): Skip if FLUXO has COD IMS AND destination is 1046
                 if is_flechinha == 0 and fluxo_has_ims and cods_dest_raw == '1046':
-                    if row["DESENHO"] == DEBUG_PN:
-                        print(f"  [SKIP] Skipping FLUXO with IMS={fluxo_cod_ims} and dest=1046 (reserved for flechinha)")
+                    # if row["DESENHO"] == DEBUG_PN:
+                    #     print(f"  [SKIP] Skipping FLUXO with IMS={fluxo_cod_ims} and dest=1046 (reserved for flechinha)")
                     continue  # Skip this FLUXO row (reserved for flechinha to 1046)
                
                 if match_fornecedor or match_ims:

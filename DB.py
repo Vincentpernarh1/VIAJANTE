@@ -1096,8 +1096,8 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
             capacidade_series = db_MDR.loc[filtro, coluna].dropna()
 
             if capacidade_series.empty:
-                print(
-                    f"[ERRO] Capacidade não encontrada para MDR {mdr} na coluna '{coluna}' (veic anterior {veic_anterior})")
+                # print(
+                #     f"[ERRO] Capacidade não encontrada para MDR {mdr} na coluna '{coluna}' (veic anterior {veic_anterior})")
                 return None
 
             return capacidade_series.values[0]
