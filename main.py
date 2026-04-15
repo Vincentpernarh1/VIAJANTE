@@ -467,8 +467,42 @@ def input_demanda(cod_destinos, use_all_codes=False, sheet_name=None, use_manual
 
    
     df_final = pd.DataFrame(all_rows).drop_duplicates().reset_index(drop=True)
-    
-   
+
+    # For FLECHINHA rows: if the same DESENHO+QTDE has both a COD DESTINO=1046 row
+    # AND a non-1046 row (e.g. 1080), keep only the 1046 row.
+    if 'FLECHINHA' in df_final.columns and 'COD DESTINO' in df_final.columns:
+        flech = df_final[df_final['FLECHINHA'] == 1].copy()
+        non_flech = df_final[df_final['FLECHINHA'] != 1]
+        if not flech.empty:
+            has_1046 = set(
+                flech[flech['COD DESTINO'] == '1046']
+                .apply(lambda r: (r['DESENHO'], r['QTDE']), axis=1)
+            )
+            # drop non-1046 flechinha rows whose DESENHO+QTDE also has a 1046 row
+            flech = flech[
+                ~(
+                    (flech['COD DESTINO'] != '1046') &
+                    flech.apply(lambda r: (r['DESENHO'], r['QTDE']) in has_1046, axis=1)
+                )
+            ]
+        df_final = pd.concat([non_flech, flech], ignore_index=True)
+
+    # Normalise COD FORNECEDOR to clean strings (no "800006330.0") before writing to Excel.
+    # Empty/None stays None so Excel writes an empty cell (not '0', which would cause
+    # false substring matches on reload).
+    if 'COD FORNECEDOR' in df_final.columns:
+        def _norm_forn(val):
+            s = str(val).strip()
+            if s in ('nan', '', 'None'):
+                return None
+            if '/' in s:
+                return s
+            try:
+                return str(int(float(s)))
+            except (ValueError, TypeError):
+                return s
+        df_final['COD FORNECEDOR'] = df_final['COD FORNECEDOR'].apply(_norm_forn)
+
     # If user chose to force a manual vehicle, override the VEICULO column
     if use_manual and manual_veiculo is not None:
         try:

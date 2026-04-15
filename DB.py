@@ -315,8 +315,10 @@ def Processar_Demandas(cod_destino, pasta_demandas="Demandas", sheet_name=None):
         df_final['COD FORNECEDOR'] = df_final['COD FORNECEDOR'].fillna(df_final['COD IMS'])
 
     # Garante que as colunas numéricas tenham o tipo de dados correto, tratando possíveis erros
-    # Esta etapa é importante para garantir a consistência entre os dados de texto e Excel
-    colunas_numericas = ["DESENHO", "COD FORNECEDOR", "QTDE"]
+    # COD FORNECEDOR is intentionally excluded here because fillna(COD IMS) may have placed
+    # compound codes like "56589/46051" into it — converting those to numeric would produce NaN.
+    # COD FORNECEDOR is cleaned separately below to preserve compound values.
+    colunas_numericas = ["DESENHO", "QTDE"]
     for col in colunas_numericas:
         if col in df_final.columns:
             df_final[col] = pd.to_numeric(df_final[col], errors='coerce')
@@ -328,13 +330,29 @@ def Processar_Demandas(cod_destino, pasta_demandas="Demandas", sheet_name=None):
     # Remove linhas onde QTDE é zero ou negativo
     df_final = df_final[df_final['QTDE'] > 0]
 
-    # Converte colunas para inteiro após remover os nulos
+    # Converte DESENHO e QTDE para inteiro após remover os nulos
     for col in colunas_numericas:
         if col in df_final.columns:
             df_final[col] = pd.to_numeric(df_final[col], errors='coerce')
             # Só converte para int se não tiver NaN
             if df_final[col].notna().all():
                 df_final[col] = df_final[col].astype(int)
+
+    # Clean up COD FORNECEDOR: always store as string to prevent float upcast.
+    # Numeric values drop the .0 suffix; compound codes kept; empty -> None (not '0',
+    # because '0' would cause false substring matches in main.py matching logic).
+    if 'COD FORNECEDOR' in df_final.columns:
+        def _clean_forn(val):
+            s = str(val).strip()
+            if s in ('nan', '', 'None'):
+                return None
+            if '/' in s:
+                return s
+            try:
+                return str(int(float(s)))
+            except (ValueError, TypeError):
+                return s
+        df_final['COD FORNECEDOR'] = df_final['COD FORNECEDOR'].apply(_clean_forn)
     
     # Clean up COD DESTINO to remove .0 suffix if it exists
     if 'COD DESTINO' in df_final.columns:
@@ -564,17 +582,27 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
 
 
         # --- Leitura dos arquivos ---
-        template = pd.read_excel('Template.xlsx', dtype={'COD FORNECEDOR': int, 'DESENHO': str})
+        template = pd.read_excel('Template.xlsx', dtype={'DESENHO': str})
         template = template[template['QTDE'] > 0]
         
         # Ensure COD IMS column exists (for backward compatibility with files that don't have it)
         if 'COD IMS' not in template.columns:
             template['COD IMS'] = ""
         
-        # Clean up COD FORNECEDOR to ensure it's integer without .0 suffix
+        # Clean up COD FORNECEDOR: always store as string to prevent float upcast ("800006330.0").
+        # Numeric values drop the .0 suffix; compound codes kept; empty → "0".
         if 'COD FORNECEDOR' in template.columns:
-            template['COD FORNECEDOR'] = pd.to_numeric(template['COD FORNECEDOR'], errors='coerce')
-            template['COD FORNECEDOR'] = template['COD FORNECEDOR'].fillna(0).astype(int)
+            def _clean_cod_forn_template(val):
+                s = str(val).strip()
+                if s in ('nan', '', 'None'):
+                    return '0'
+                if '/' in s:
+                    return s
+                try:
+                    return str(int(float(s)))
+                except (ValueError, TypeError):
+                    return s
+            template['COD FORNECEDOR'] = template['COD FORNECEDOR'].apply(_clean_cod_forn_template)
         
         # Clean up COD DESTINO to remove .0 suffix
         if 'COD DESTINO' in template.columns:
@@ -765,10 +793,9 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
         template['PESO MDR'] = template['PESO MDR'].replace([np.inf, -np.inf], np.nan).fillna(0)
         template['PESO TOTAL'] = round(template['PESO MAT'] + template['PESO MDR'], 1)
 
-        # Final cleanup: Ensure all ID columns are properly formatted without .0 suffix
-        # COD FORNECEDOR should be integer format
+        # Final cleanup: re-apply string normalisation in case any operation reintroduced floats
         if 'COD FORNECEDOR' in template.columns:
-            template['COD FORNECEDOR'] = pd.to_numeric(template['COD FORNECEDOR'], errors='coerce').fillna(0).astype(int)
+            template['COD FORNECEDOR'] = template['COD FORNECEDOR'].apply(_clean_cod_forn_template)
         
         # COD DESTINO should be string without .0
         if 'COD DESTINO' in template.columns:
