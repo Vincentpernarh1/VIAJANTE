@@ -337,6 +337,7 @@ def input_demanda(cod_destinos, use_all_codes=False, sheet_name=None, use_manual
                     tipo = linha_fluxo.get("TIPO SATURACAO", None)
                     mot = linha_fluxo.get("MOT", None)
                     fluxo_cod_ims_val = linha_fluxo.get("COD IMS", None)
+                    fluxo_id = linha_fluxo.get("COD FLUXO", None)
                     cod_dest_full = cods_dest_raw
                     
                     # Se foi match por IMS e arquivo não trazia fornecedor, usa o fornecedor do fluxo
@@ -355,6 +356,7 @@ def input_demanda(cod_destinos, use_all_codes=False, sheet_name=None, use_manual
                         all_rows.append({
                             "COD FORNECEDOR": matched_fornecedor_to_use,
                             "COD IMS": fluxo_cod_ims_val or cod_ims_from_file,
+                            "COD FLUXO": fluxo_id,
                             "COD DESTINO": cod_dest_full,
                             "DESENHO": row["DESENHO"],
                             "QTDE": row["QTDE"],
@@ -372,6 +374,7 @@ def input_demanda(cod_destinos, use_all_codes=False, sheet_name=None, use_manual
                 all_rows.append({
                     "COD FORNECEDOR": matched_cod_forn,
                     "COD IMS": cod_ims_from_file,
+                    "COD FLUXO": None,
                     "COD DESTINO": None,
                     "DESENHO": row["DESENHO"],
                     "QTDE": row["QTDE"],
@@ -440,6 +443,7 @@ def input_demanda(cod_destinos, use_all_codes=False, sheet_name=None, use_manual
                         tipo = linha_fluxo.get("TIPO SATURACAO", None)
                         mot = linha_fluxo.get("MOT", None)
                         cod_ims = linha_fluxo.get("COD IMS", None)
+                        fluxo_id = linha_fluxo.get("COD FLUXO", None)
                         cod_dest_full = cods_dest_raw
                         # print(f"match_fornecedor={fornecedor_str}, cod_dest={cod_dest}, cods_dest_raw={cods_dest_raw}, match_cod_dest={match_cod_dest}")
                         
@@ -456,6 +460,7 @@ def input_demanda(cod_destinos, use_all_codes=False, sheet_name=None, use_manual
                     all_rows.append({
                         "COD FORNECEDOR": matched_cod_forn,
                         "COD IMS": cod_ims or cod_ims_from_file,
+                        "COD FLUXO": fluxo_id,
                         "COD DESTINO": cod_dest_full,
                         "DESENHO": row["DESENHO"],
                         "QTDE": row["QTDE"],

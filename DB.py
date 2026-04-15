@@ -425,8 +425,9 @@ def calcular_empilhamento_line_haul(df_saturacao, db_empilhamento):
 
     for _, base_row in base_df.iterrows():
         for _, sobre_row in sobre_df.iterrows():
-            if base_row['COD FORNECEDOR'] == sobre_row['COD FORNECEDOR']:
+            if base_row['COD FORNECEDOR'] == sobre_row['COD FORNECEDOR'] and base_row['COD FLUXO'] == sobre_row['COD FLUXO']:
                 fornecedor = base_row['COD FORNECEDOR']
+                cod_fluxo = base_row['COD FLUXO']
                 embal_base = base_row['EMBALAGEM']
                 embal_sobre = sobre_row['EMBALAGEM']
 
@@ -461,6 +462,7 @@ def calcular_empilhamento_line_haul(df_saturacao, db_empilhamento):
 
                 empilhamento_rows.append({
                     'FORNECEDOR': fornecedor,
+                    'COD FLUXO': cod_fluxo,
                     'EMBALAGEM_BASE': embal_base,
                     'EMBALAGEM_SOBREPOSTA': embal_sobre,
                     'CAPACIDADE_VEÍCULO': capacidade_veiculo,
@@ -487,8 +489,10 @@ def calcular_empilhamento(df_saturacao, db_empilhamento):
 
     for _, base_row in base_df.iterrows():
         for _, sobre_row in sobre_df.iterrows():
-            if base_row['COD FORNECEDOR'] == sobre_row['COD FORNECEDOR']:
+            # Must match on COD FLUXO too — stacking only within the same fluxo
+            if base_row['COD FORNECEDOR'] == sobre_row['COD FORNECEDOR'] and base_row['COD FLUXO'] == sobre_row['COD FLUXO']:
                 fornecedor = base_row['COD FORNECEDOR']
+                cod_fluxo = base_row['COD FLUXO']
                 embal_base = base_row['EMBALAGEM']
                 embal_sobre = sobre_row['EMBALAGEM']
 
@@ -523,6 +527,7 @@ def calcular_empilhamento(df_saturacao, db_empilhamento):
 
                 empilhamento_rows.append({
                     'FORNECEDOR': fornecedor,
+                    'COD FLUXO': cod_fluxo,
                     'EMBALAGEM_BASE': embal_base,
                     'EMBALAGEM_SOBREPOSTA': embal_sobre,
                     'CAPACIDADE_VEÍCULO': capacidade_veiculo,
@@ -809,7 +814,11 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
         if 'FLECHINHA' not in template.columns:
             template['FLECHINHA'] = 0
         
-        template = template[['COD FORNECEDOR', 'FORNECEDOR', 'COD DESTINO', 'DESENHO', 'QTDE', 'DESCRIÇÃO MATERIAL',
+        # Ensure COD FLUXO exists (older Template.xlsx files may not have it)
+        if 'COD FLUXO' not in template.columns:
+            template['COD FLUXO'] = None
+        
+        template = template[['COD FLUXO', 'COD FORNECEDOR', 'FORNECEDOR', 'COD DESTINO', 'DESENHO', 'QTDE', 'DESCRIÇÃO MATERIAL',
                              'MDR', 'DESCRIÇÃO DA EMBALAGEM', 'QME', 'QTD EMBALAGENS', 'TIPO SATURACAO',
                              'VEICULO', 'MOT', 'FLECHINHA', 'M³', 'PESO MAT', 'PESO MDR', 'PESO TOTAL', 'PESO_MAXIMO']]
         
@@ -930,17 +939,13 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
             adicionar_erro(f"{rows_removed_flechinha} linha(s) removida(s) (FLECHINHA=1 e COD DESTINO=1080)", "INFO")
        
         # --- Construção da aba Saturação ---
+        # Group by COD FLUXO (unique per fluxo row in FLUXO.xlsx) so each fluxo is
+        # calculated independently — quantities from different fluxos are never summed.
         df_saturacao = (
-            template.groupby(['COD FORNECEDOR', 'FORNECEDOR', 'MDR'], as_index=False)['QTD EMBALAGENS']
+            template.groupby(['COD FLUXO', 'COD FORNECEDOR', 'FORNECEDOR', 'COD DESTINO', 'MDR', 'VEICULO'], as_index=False)['QTD EMBALAGENS']
             .sum()
             .rename(columns={'MDR': 'EMBALAGEM', 'QTD EMBALAGENS': 'TOTAL DE CXS'})
         )
-
-        # Recupera a coluna VEICULO para cada fornecedor + embalagem
-        col_veiculo = template[['COD FORNECEDOR', 'MDR', 'VEICULO']].drop_duplicates()
-        col_veiculo = col_veiculo.rename(columns={'MDR': 'EMBALAGEM'})
-
-        df_saturacao = df_saturacao.merge(col_veiculo, on=['COD FORNECEDOR', 'EMBALAGEM'], how='left')
 
         # Create mappings from db_MDR - filter out NaN values before deduplication
         # to ensure we don't get empty/null values when valid values exist
@@ -1170,7 +1175,8 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
         def integrar_saturacao_total(df_sat, df_emp):
             def calcular(row):
                 filtro = (df_emp['FORNECEDOR'] == row['COD FORNECEDOR']) & \
-                         (df_emp['EMBALAGEM_BASE'] == row['EMBALAGEM'])
+                         (df_emp['EMBALAGEM_BASE'] == row['EMBALAGEM']) & \
+                         (df_emp['COD FLUXO'] == row['COD FLUXO'])
                 soma_saturacoes = df_emp[filtro]['SATURAÇÃO'].sum()
                 # Prevent division by zero
                 if pd.isna(row['CAPACIDADE']) or row['CAPACIDADE'] == 0:
@@ -1213,7 +1219,8 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
         # --- Cálculo da SAT por linha ---
         template.loc[:, 'CHAVE'] = template['COD FORNECEDOR'].astype(str) + '-' + template['MDR'].astype(str)
         
-        template = template.merge(df_saturacao[['CHAVE', 'SATURAÇÃO_POR_MDR']], on='CHAVE', how='left')
+        # Merge on both CHAVE and COD FLUXO so each fluxo gets its own saturation
+        template = template.merge(df_saturacao[['CHAVE', 'COD FLUXO', 'SATURAÇÃO_POR_MDR']], on=['CHAVE', 'COD FLUXO'], how='left')
         
         # Clean up SATURAÇÃO_POR_MDR to avoid infinity values
         template['SATURAÇÃO_POR_MDR'] = template['SATURAÇÃO_POR_MDR'].replace([np.inf, -np.inf], np.nan).fillna(0)
@@ -1631,6 +1638,12 @@ def consolidar_dados(use_manual=False, manual_veiculo=None):
                 
                 
                 mask_fornecedor = subset_template.apply(row_matches_suppliers, axis=1)
+                
+                # Filter by COD FLUXO so only rows belonging to THIS specific fluxo
+                # are used — prevents double-counting when multiple fluxos share the
+                # same supplier and destination (e.g. OMR fluxo 182 vs CIE FORJAS 183).
+                if 'COD FLUXO' in subset_template.columns:
+                    mask_fornecedor = mask_fornecedor & (subset_template['COD FLUXO'] == cod_fluxo)
                 
                 # Filter by INCLUDE_IN_CALC to exclude invalid CT PNs
                 if 'INCLUDE_IN_CALC' in subset_template.columns:
