@@ -1,6 +1,7 @@
 import dotenv
 import os
 import sys
+import getpass
 from playwright.sync_api import sync_playwright
 from datetime import datetime
 import shutil
@@ -43,10 +44,24 @@ os.makedirs(download_folder, exist_ok=True)
 
 print(f"Download folder: {download_folder}")
 
-# Use AppData for automation profile (standard for .exe applications)
-# Each user will have their own isolated profile with their own SSO login
-automation_profile = os.path.join(os.getenv('LOCALAPPDATA'), 'Viajante', 'edge_automation_profile')
+# Use AppData for automation profile — one profile per Windows user so SSO sessions are preserved
+# LOCALAPPDATA works in all Windows languages (Portuguese, English, etc.) - it's a system variable
+# Profile path: %LOCALAPPDATA%\Viajante\edge_automation_profile\<username>
+
+# Get Windows username - try environment variable first, then getpass as fallback
+windows_username = os.getenv('USERNAME') or getpass.getuser() or 'default'
+
+# LOCALAPPDATA is safe - it exists in all Windows versions/languages (C:\Users\<user>\AppData\Local)
+local_appdata = os.getenv('LOCALAPPDATA')
+if not local_appdata:
+    # Fallback: construct manually if LOCALAPPDATA is somehow missing
+    user_profile = os.getenv('USERPROFILE') or os.path.expanduser('~')
+    local_appdata = os.path.join(user_profile, 'AppData', 'Local')
+
+automation_profile = os.path.join(local_appdata, 'Viajante', 'edge_automation_profile', windows_username)
 os.makedirs(automation_profile, exist_ok=True)
+
+print(f"Edge profile folder: {automation_profile}")
 
 # Files to download
 FILES_TO_DOWNLOAD = [
@@ -160,6 +175,7 @@ def download_file_from_sharepoint(page, filename, silent=False, progress_callbac
     
     return file_found
 
+
 def download_sharepoint_files(headless=False, silent=False, auto_close=False, progress_callback=None):
     """Main function to download all required files from SharePoint
     
@@ -169,6 +185,8 @@ def download_sharepoint_files(headless=False, silent=False, auto_close=False, pr
         auto_close: If True, close browser automatically without waiting for input
         progress_callback: Optional function(message) to report progress to GUI
     """
+    
+    
     with sync_playwright() as p:
         # Launch Edge with automation profile
         if not silent:
@@ -177,6 +195,7 @@ def download_sharepoint_files(headless=False, silent=False, auto_close=False, pr
         if progress_callback:
             progress_callback("Abrindo navegador Edge...")
         
+        # Always use the installed Microsoft Edge so SSO sessions work correctly
         context = p.chromium.launch_persistent_context(
             user_data_dir=automation_profile,
             headless=headless,

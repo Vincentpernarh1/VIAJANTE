@@ -10,6 +10,7 @@ import re
 from PIL import Image, ImageTk
 import traceback
 import os
+import sys
 import glob
 import numpy as np
 import warnings 
@@ -39,7 +40,11 @@ warnings.filterwarnings(
 
 
 
-caminho_base = os.getcwd()
+# Always resolve paths relative to the exe's location (or source root), never os.getcwd()
+if getattr(sys, 'frozen', False):
+    caminho_base = os.path.dirname(sys.executable)
+else:
+    caminho_base = os.path.dirname(os.path.abspath(__file__))
 
 # Helper function to find latest file matching pattern
 def get_latest_file(pattern, fallback=None):
@@ -79,6 +84,58 @@ def limpar_erros():
 def obter_erros():
     """Retorna a lista de erros acumulados"""
     return erros_processamento.copy()
+
+
+def _campo_tem_codigo(campo, alvo):
+    if pd.isna(campo):
+        return False
+    alvo_str = str(alvo).strip()
+    if not alvo_str:
+        return False
+    partes = [codigo.strip() for codigo in re.split(r'\s*[,/]\s*', str(campo).strip()) if codigo.strip()]
+    return alvo_str in partes
+
+
+def _normalizar_codigos_campo(campo):
+    if pd.isna(campo):
+        return []
+    return [codigo.strip() for codigo in re.split(r'\s*[,/]\s*', str(campo).strip()) if codigo.strip()]
+
+
+def _codigo_principal(campo):
+    codigos = _normalizar_codigos_campo(campo)
+    if not codigos:
+        return ''
+
+    codigo = codigos[0]
+    if codigo in ('0', '0.0'):
+        return ''
+
+    try:
+        return str(int(float(codigo)))
+    except (ValueError, TypeError):
+        return codigo
+
+
+def _mdr_chave(campo):
+    if pd.isna(campo):
+        return ''
+
+    texto = str(campo).strip()
+    if texto.lower() in ('', 'nan', 'none'):
+        return ''
+
+    return texto.upper()
+
+
+def _chave_fornecedor_mdr(fornecedor, mdr):
+    fornecedor_chave = _codigo_principal(fornecedor)
+    mdr_chave = _mdr_chave(mdr)
+
+    if not fornecedor_chave or not mdr_chave:
+        return ''
+
+    return f"{fornecedor_chave}|{mdr_chave}"
 
 
 def normalize_sheet_name(desired_name, available_sheets):
@@ -176,7 +233,7 @@ def Processar_Demandas(cod_destino, pasta_demandas="Demandas", sheet_name=None):
                     lista_dfs.append(df_temp)
 
             # --- NOVA LÓGICA PARA PROCESSAR ARQUIVOS EXCEL (.XLS, .XLSX) ---
-            elif nome_arquivo_lower.endswith((".xls", ".xlsx")) and ("saturação" not in nome_arquivo_lower and "saturacao" not in nome_arquivo_lower) and not nome_arquivo_lower.startswith("~$"):
+            elif nome_arquivo_lower.endswith((".xls", ".xlsx")) and ("saturação" not in nome_arquivo_lower and "saturacao" not in nome_arquivo_lower) and not nome_arquivo_lower.startswith("~$") and 'Coletas' not in nome_arquivo and 'DHL' not in nome_arquivo:
                                
                 # Mapeamento dos nomes de coluna do arquivo Excel para os nomes desejados
                 colunas_mapeamento = {
@@ -203,7 +260,7 @@ def Processar_Demandas(cod_destino, pasta_demandas="Demandas", sheet_name=None):
                 
                 # 2. Renomeia as colunas para o padrão final
                 df_temp.rename(columns=colunas_mapeamento, inplace=True)
-
+               
                 # 3. Filtra por COD DESTINO se fornecido
                 if cod_destino is not None:
                     df_temp = df_temp[df_temp['COD DESTINO'].astype(str) == str(cod_destino)]
@@ -214,7 +271,7 @@ def Processar_Demandas(cod_destino, pasta_demandas="Demandas", sheet_name=None):
                 # 5. Adiciona o DataFrame processado à lista para concatenação posterior
                 lista_dfs.append(df_temp)
                 
-            elif nome_arquivo_lower.endswith((".xls", ".xlsx")) and ("saturação" in nome_arquivo_lower or "saturacao" in nome_arquivo_lower)  and not nome_arquivo_lower.startswith("~$"):
+            elif nome_arquivo_lower.endswith((".xls", ".xlsx")) and ("saturação" in nome_arquivo_lower or "saturacao" in nome_arquivo_lower)  and not nome_arquivo_lower.startswith("~$") and 'Coletas' not in nome_arquivo and 'DHL' not in nome_arquivo:
                                 
                 # Só processa arquivos de saturação se sheet_name foi fornecido
                 if sheet_name is None:
@@ -290,7 +347,53 @@ def Processar_Demandas(cod_destino, pasta_demandas="Demandas", sheet_name=None):
                 
                 # 7. Adiciona o DataFrame processado à lista para concatenação posterior
                 lista_dfs.append(df_temp)
+                
+            elif nome_arquivo_lower.endswith((".xls", ".xlsx")) and not nome_arquivo_lower.startswith("~$") and "Coletas DHL" in nome_arquivo and "DHL" in nome_arquivo:
+                print(f"Processando arquivo de coletas DHL: '{nome_arquivo}'")
+                
+                # Mapeamento dos nomes de coluna do arquivo Excel para os nomes desejados
+                colunas_mapeamento = {
+                    'Desenho': 'DESENHO',
+                    'Codigo': 'COD FORNECEDOR',
+                    'Quantidade': 'QTDE',
+                    'Data da coleta': 'FDS'  # Usamos a data da coleta como COD DESTINO para filtrar depois, se necessário
+                }
+                
+                # Lê o arquivo Excel
+                df_excel = pd.read_excel(caminho_completo_arquivo)
 
+                # Pega a lista de colunas que precisamos do arquivo original
+                colunas_originais_necessarias = list(colunas_mapeamento.keys())
+
+                # Verifica se todas as colunas necessárias existem no arquivo
+                if not all(coluna in df_excel.columns for coluna in colunas_originais_necessarias):
+                    faltando = [c for c in colunas_originais_necessarias if c not in df_excel.columns]
+                    adicionar_erro(f"Arquivo '{nome_arquivo}': Colunas faltando: {', '.join(faltando)}", "AVISO")
+                    continue
+
+                # 1. Seleciona apenas as colunas que nos interessam
+                df_temp = df_excel[colunas_originais_necessarias].copy()
+                
+                # print(df_temp.head())
+                
+                # 2. Renomeia as colunas para o padrão final
+                df_temp.rename(columns=colunas_mapeamento, inplace=True)
+                
+               
+                df_temp = df_temp[df_temp['FDS'] == sheet_name]
+
+
+                # 3. Filtra por COD DESTINO se fornecido
+                if cod_destino is not None:
+                    df_temp = df_temp[df_temp['COD DESTINO'].astype(str) == str(cod_destino)]
+
+                # 4. Marca como NÃO FLECHINHA (Excel normal, não saturação)
+                df_temp['IS_FLECHINHA'] = 0
+                
+                # 5. Adiciona o DataFrame processado à lista para concatenação posterior
+                lista_dfs.append(df_temp)
+                
+                
         except Exception as e:
             adicionar_erro(f"Erro ao processar arquivo '{nome_arquivo}': {str(e)}", "ERRO")
             continue
@@ -367,9 +470,6 @@ def Processar_Demandas(cod_destino, pasta_demandas="Demandas", sheet_name=None):
 # Exemplo de como chamar a função
 # df_processado = Processar_Demandas(cod_destino="BR01")
 # print(df_processado)
-
-
-
 
 
 
@@ -590,6 +690,12 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
         template = pd.read_excel('Template.xlsx', dtype={'DESENHO': str})
         template = template[template['QTDE'] > 0]
         
+        # Filter out rows where COD FLUXO is NaN and convert to int
+        if 'COD FLUXO' in template.columns:
+            template = template[template['COD FLUXO'].notna()].copy()
+            if not template.empty:
+                template['COD FLUXO'] = template['COD FLUXO'].astype(int)
+        
         # Ensure COD IMS column exists (for backward compatibility with files that don't have it)
         if 'COD IMS' not in template.columns:
             template['COD IMS'] = ""
@@ -718,25 +824,102 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
 
         # Mapas baseados na chave composta - already sorted by DESENHO ATUALIZAÇÃO descending
         # This ensures we always get the most recent non-null values
-        mapa_pn = db_PN.drop_duplicates('KEY', keep='first').set_index('KEY')['DESCRIÇÃO']
+        # Create composite key mappings for DESCRIÇÃO (COD FORNECEDOR + KEY where KEY = DESENHO + MDR)
+        db_PN_valid_desc = db_PN[db_PN['DESCRIÇÃO'].notna()].copy()
+        db_PN_valid_desc['FORNECEDOR_CHAVE'] = db_PN_valid_desc['COD FORNECEDOR'].apply(_codigo_principal)
+        db_PN_valid_desc['DESC_PN_KEY'] = ''
+        desc_pn_key_mask = db_PN_valid_desc['FORNECEDOR_CHAVE'].ne('') & db_PN_valid_desc['KEY'].notna()
+        db_PN_valid_desc.loc[desc_pn_key_mask, 'DESC_PN_KEY'] = (
+            db_PN_valid_desc.loc[desc_pn_key_mask, 'FORNECEDOR_CHAVE'].astype(str)
+            + '|'
+            + db_PN_valid_desc.loc[desc_pn_key_mask, 'KEY'].astype(str)
+        )
+        mapa_pn = db_PN_valid_desc[db_PN_valid_desc['DESC_PN_KEY'] != ''].drop_duplicates('DESC_PN_KEY', keep='first').set_index('DESC_PN_KEY')['DESCRIÇÃO']
+        mapa_pn_fallback = db_PN_valid_desc.drop_duplicates('KEY', keep='first').set_index('KEY')['DESCRIÇÃO']
+        
         mapa_mdr = db_PN.drop_duplicates('KEY', keep='first').set_index('KEY')['MDR']
         
         # For QME and PESO, filter out invalid values before mapping
-        db_PN_valid_qme = db_PN[db_PN['QME'].notna() & (db_PN['QME'] > 0)]
-        mapa_qme = db_PN_valid_qme.drop_duplicates('KEY', keep='first').set_index('KEY')['QME']
+        # Create composite key mappings for QME (COD FORNECEDOR + KEY where KEY = DESENHO + MDR)
+        db_PN_valid_qme = db_PN[db_PN['QME'].notna() & (db_PN['QME'] > 0)].copy()
+        db_PN_valid_qme['FORNECEDOR_CHAVE'] = db_PN_valid_qme['COD FORNECEDOR'].apply(_codigo_principal)
+        db_PN_valid_qme['QME_KEY'] = ''
+        qme_key_mask = db_PN_valid_qme['FORNECEDOR_CHAVE'].ne('') & db_PN_valid_qme['KEY'].notna()
+        db_PN_valid_qme.loc[qme_key_mask, 'QME_KEY'] = (
+            db_PN_valid_qme.loc[qme_key_mask, 'FORNECEDOR_CHAVE'].astype(str)
+            + '|'
+            + db_PN_valid_qme.loc[qme_key_mask, 'KEY'].astype(str)
+        )
+        mapa_qme = db_PN_valid_qme[db_PN_valid_qme['QME_KEY'] != ''].drop_duplicates('QME_KEY', keep='first').set_index('QME_KEY')['QME']
+        mapa_qme_fallback = db_PN_valid_qme.drop_duplicates('KEY', keep='first').set_index('KEY')['QME']
         
-        db_PN_valid_peso = db_PN[db_PN['PESO (Kg) MATERIAL'].notna()]
-        mapa_peso_pn = db_PN_valid_peso.drop_duplicates('KEY', keep='first').set_index('KEY')['PESO (Kg) MATERIAL']
+        # Create composite key mappings for PESO (COD FORNECEDOR + KEY where KEY = DESENHO + MDR)
+        db_PN_valid_peso = db_PN[db_PN['PESO (Kg) MATERIAL'].notna()].copy()
+        db_PN_valid_peso['FORNECEDOR_CHAVE'] = db_PN_valid_peso['COD FORNECEDOR'].apply(_codigo_principal)
+        db_PN_valid_peso['PESO_PN_KEY'] = ''
+        peso_pn_key_mask = db_PN_valid_peso['FORNECEDOR_CHAVE'].ne('') & db_PN_valid_peso['KEY'].notna()
+        db_PN_valid_peso.loc[peso_pn_key_mask, 'PESO_PN_KEY'] = (
+            db_PN_valid_peso.loc[peso_pn_key_mask, 'FORNECEDOR_CHAVE'].astype(str)
+            + '|'
+            + db_PN_valid_peso.loc[peso_pn_key_mask, 'KEY'].astype(str)
+        )
+        mapa_peso_pn = db_PN_valid_peso[db_PN_valid_peso['PESO_PN_KEY'] != ''].drop_duplicates('PESO_PN_KEY', keep='first').set_index('PESO_PN_KEY')['PESO (Kg) MATERIAL']
+        mapa_peso_pn_fallback = db_PN_valid_peso.drop_duplicates('KEY', keep='first').set_index('KEY')['PESO (Kg) MATERIAL']
 
         # Mapas vindos do db_MDR - filter out nan values BEFORE creating mappings
-        db_MDR_valid_desc = db_MDR[db_MDR['DESCRIÇÃO'].notna()]
-        mapa_descricao_mdr = db_MDR_valid_desc.drop_duplicates('MDR', keep='first').set_index('MDR')['DESCRIÇÃO']
+        # Get the correct column name for FORNECEDOR
+        coluna_fornecedor_mdr = 'CÓD. FORNECEDOR' if 'CÓD. FORNECEDOR' in db_MDR.columns else ('COD FORNECEDOR' if 'COD FORNECEDOR' in db_MDR.columns else None)
         
-        db_MDR_valid_volume = db_MDR[db_MDR['VOLUME'].notna()]
-        mapa_volume = db_MDR_valid_volume.drop_duplicates('MDR', keep='first').set_index('MDR')['VOLUME']
+        # Create composite key mappings for DESCRIÇÃO (COD FORNECEDOR + MDR)
+        db_MDR_valid_desc = db_MDR[db_MDR['DESCRIÇÃO'].notna()].copy()
+        db_MDR_valid_desc['MDR_CHAVE'] = db_MDR_valid_desc['MDR'].apply(_mdr_chave)
+        if coluna_fornecedor_mdr is not None:
+            db_MDR_valid_desc['FORNECEDOR_CHAVE'] = db_MDR_valid_desc[coluna_fornecedor_mdr].apply(_codigo_principal)
+            db_MDR_valid_desc['DESC_KEY'] = ''
+            desc_key_mask = db_MDR_valid_desc['FORNECEDOR_CHAVE'].ne('') & db_MDR_valid_desc['MDR_CHAVE'].ne('')
+            db_MDR_valid_desc.loc[desc_key_mask, 'DESC_KEY'] = (
+                db_MDR_valid_desc.loc[desc_key_mask, 'FORNECEDOR_CHAVE']
+                + '|'
+                + db_MDR_valid_desc.loc[desc_key_mask, 'MDR_CHAVE']
+            )
+            mapa_descricao_mdr = db_MDR_valid_desc[db_MDR_valid_desc['DESC_KEY'] != ''].drop_duplicates('DESC_KEY', keep='first').set_index('DESC_KEY')['DESCRIÇÃO']
+        else:
+            mapa_descricao_mdr = pd.Series(dtype=str)
+        mapa_descricao_mdr_fallback = db_MDR_valid_desc.drop_duplicates('MDR_CHAVE', keep='first').set_index('MDR_CHAVE')['DESCRIÇÃO']
         
-        db_MDR_valid_peso = db_MDR[db_MDR['MDR PESO'].notna()]
-        mapa_peso_mdr = db_MDR_valid_peso.drop_duplicates('MDR', keep='first').set_index('MDR')['MDR PESO']
+        # Create composite key mappings for VOLUME (COD FORNECEDOR + MDR)
+        db_MDR_valid_volume = db_MDR[db_MDR['VOLUME'].notna()].copy()
+        db_MDR_valid_volume['MDR_CHAVE'] = db_MDR_valid_volume['MDR'].apply(_mdr_chave)
+        if coluna_fornecedor_mdr is not None:
+            db_MDR_valid_volume['FORNECEDOR_CHAVE'] = db_MDR_valid_volume[coluna_fornecedor_mdr].apply(_codigo_principal)
+            db_MDR_valid_volume['VOLUME_KEY'] = ''
+            volume_key_mask = db_MDR_valid_volume['FORNECEDOR_CHAVE'].ne('') & db_MDR_valid_volume['MDR_CHAVE'].ne('')
+            db_MDR_valid_volume.loc[volume_key_mask, 'VOLUME_KEY'] = (
+                db_MDR_valid_volume.loc[volume_key_mask, 'FORNECEDOR_CHAVE']
+                + '|'
+                + db_MDR_valid_volume.loc[volume_key_mask, 'MDR_CHAVE']
+            )
+            mapa_volume = db_MDR_valid_volume[db_MDR_valid_volume['VOLUME_KEY'] != ''].drop_duplicates('VOLUME_KEY', keep='first').set_index('VOLUME_KEY')['VOLUME']
+        else:
+            mapa_volume = pd.Series(dtype=float)
+        mapa_volume_mdr = db_MDR_valid_volume.drop_duplicates('MDR_CHAVE', keep='first').set_index('MDR_CHAVE')['VOLUME']
+        
+        # Create composite key mappings for MDR PESO (COD FORNECEDOR + MDR)
+        db_MDR_valid_peso = db_MDR[db_MDR['MDR PESO'].notna()].copy()
+        db_MDR_valid_peso['MDR_CHAVE'] = db_MDR_valid_peso['MDR'].apply(_mdr_chave)
+        if coluna_fornecedor_mdr is not None:
+            db_MDR_valid_peso['FORNECEDOR_CHAVE'] = db_MDR_valid_peso[coluna_fornecedor_mdr].apply(_codigo_principal)
+            db_MDR_valid_peso['PESO_KEY'] = ''
+            peso_key_mask = db_MDR_valid_peso['FORNECEDOR_CHAVE'].ne('') & db_MDR_valid_peso['MDR_CHAVE'].ne('')
+            db_MDR_valid_peso.loc[peso_key_mask, 'PESO_KEY'] = (
+                db_MDR_valid_peso.loc[peso_key_mask, 'FORNECEDOR_CHAVE']
+                + '|'
+                + db_MDR_valid_peso.loc[peso_key_mask, 'MDR_CHAVE']
+            )
+            mapa_peso_mdr = db_MDR_valid_peso[db_MDR_valid_peso['PESO_KEY'] != ''].drop_duplicates('PESO_KEY', keep='first').set_index('PESO_KEY')['MDR PESO']
+        else:
+            mapa_peso_mdr = pd.Series(dtype=float)
+        mapa_peso_mdr_fallback = db_MDR_valid_peso.drop_duplicates('MDR_CHAVE', keep='first').set_index('MDR_CHAVE')['MDR PESO']
         
         mapa_peso_max = db_veiculos.set_index('COD VEICULO')['PESO MAXIMO']
 
@@ -774,10 +957,77 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
        
         template = template.drop(columns=['MAP_KEY'])
        
-        template['DESCRIÇÃO MATERIAL'] = template['KEY'].map(mapa_pn)
+        # Use COD IMS + KEY as the primary descrição material key, trying every IMS code before
+        # falling back to COD FORNECEDOR and, if needed, KEY-only.
+        def resolver_descricao_material(row):
+            key = row.get('KEY')
+            if pd.isna(key) or str(key).strip() == '':
+                return np.nan
+            
+            candidatos = _normalizar_codigos_campo(row.get('COD IMS'))
+
+            if not candidatos:
+                candidatos = _normalizar_codigos_campo(row.get('COD FORNECEDOR'))
+
+            for codigo in candidatos:
+                codigo_chave = _codigo_principal(codigo)
+                if codigo_chave:
+                    chave_completa = f"{codigo_chave}|{key}"
+                    descricao = mapa_pn.get(chave_completa, np.nan)
+                    if pd.notna(descricao):
+                        return descricao
+
+            descricao_fallback = mapa_pn_fallback.get(key, np.nan)
+            return descricao_fallback
+
+        template['DESCRIÇÃO MATERIAL'] = template.apply(resolver_descricao_material, axis=1)
         template['MDR'] = template['KEY'].map(mapa_mdr)  # reforça MDR correto do KEY
-        template['DESCRIÇÃO DA EMBALAGEM'] = template['MDR'].map(mapa_descricao_mdr)
-        template['QME'] = template['KEY'].map(mapa_qme)
+        
+        # Use COD IMS + MDR as the primary descrição key, trying every IMS code before
+        # falling back to COD FORNECEDOR and, if needed, MDR-only.
+        def resolver_descricao(row):
+            mdr_chave = _mdr_chave(row.get('MDR'))
+            candidatos = _normalizar_codigos_campo(row.get('COD IMS'))
+
+            if not candidatos:
+                candidatos = _normalizar_codigos_campo(row.get('COD FORNECEDOR'))
+
+            for codigo in candidatos:
+                chave = _chave_fornecedor_mdr(codigo, mdr_chave)
+                if chave:
+                    descricao = mapa_descricao_mdr.get(chave, np.nan)
+                    if pd.notna(descricao):
+                        return descricao
+
+            descricao_fallback = mapa_descricao_mdr_fallback.get(mdr_chave, np.nan)
+            return descricao_fallback
+
+        template['DESCRIÇÃO DA EMBALAGEM'] = template.apply(resolver_descricao, axis=1)
+        
+        # Use COD IMS + KEY as the primary QME key, trying every IMS code before
+        # falling back to COD FORNECEDOR and, if needed, KEY-only.
+        def resolver_qme(row):
+            key = row.get('KEY')
+            if pd.isna(key) or str(key).strip() == '':
+                return np.nan
+            
+            candidatos = _normalizar_codigos_campo(row.get('COD IMS'))
+
+            if not candidatos:
+                candidatos = _normalizar_codigos_campo(row.get('COD FORNECEDOR'))
+
+            for codigo in candidatos:
+                codigo_chave = _codigo_principal(codigo)
+                if codigo_chave:
+                    chave_completa = f"{codigo_chave}|{key}"
+                    qme = mapa_qme.get(chave_completa, np.nan)
+                    if pd.notna(qme):
+                        return qme
+
+            qme_fallback = mapa_qme_fallback.get(key, np.nan)
+            return qme_fallback
+
+        template['QME'] = template.apply(resolver_qme, axis=1)
 
         # Ensure QME is valid (not zero, not NaN) before division
         template['QME'] = template['QME'].fillna(1)  # Replace NaN with 1 to avoid division issues
@@ -787,16 +1037,154 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
         # Clean up any infinity values in QTD EMBALAGENS
         template['QTD EMBALAGENS'] = template['QTD EMBALAGENS'].replace([np.inf, -np.inf], np.nan).fillna(0)
 
-        # Use 3 decimal places for M³ to capture small variations (e.g., 0.036 instead of 0.0)
-        template['M³'] = round(template['QTD EMBALAGENS'] * template['MDR'].map(mapa_volume), 3)
-        template['PESO MAT'] = round(template['QTDE'] * template['KEY'].map(mapa_peso_pn), 1)
-        template['PESO MDR'] = round(template['QTD EMBALAGENS'] * template['MDR'].map(mapa_peso_mdr), 1)
+        # Use COD IMS + MDR as the primary volume key, trying every IMS code before
+        # falling back to COD FORNECEDOR and, if needed, MDR-only.
+        def resolver_volume(row):
+            mdr_chave = _mdr_chave(row.get('MDR'))
+            candidatos = _normalizar_codigos_campo(row.get('COD IMS'))
+
+            if not candidatos:
+                candidatos = _normalizar_codigos_campo(row.get('COD FORNECEDOR'))
+
+            for codigo in candidatos:
+                chave = _chave_fornecedor_mdr(codigo, mdr_chave)
+                if chave:
+                    volume = mapa_volume.get(chave, np.nan)
+                    if pd.notna(volume):
+                        return pd.Series({'VOLUME_UNITARIO': volume, 'VOLUME_KEY': chave})
+
+            volume_fallback = mapa_volume_mdr.get(mdr_chave, np.nan)
+            return pd.Series({'VOLUME_UNITARIO': volume_fallback, 'VOLUME_KEY': ''})
+
+        volume_info = template.apply(resolver_volume, axis=1)
+        volume_por_mdr = volume_info['VOLUME_UNITARIO'].replace([np.inf, -np.inf], np.nan).fillna(0)
+        volume_lookup_chave = volume_info['VOLUME_KEY']
+        
+        template['M³'] = round(template['QTD EMBALAGENS'] * volume_por_mdr, 3)
+        
+        
+        # Use COD IMS + KEY as the primary peso material key, trying every IMS code before
+        # falling back to COD FORNECEDOR and, if needed, KEY-only.
+        def resolver_peso_material(row):
+            key = row.get('KEY')
+            if pd.isna(key) or str(key).strip() == '':
+                return np.nan
+            
+            candidatos = _normalizar_codigos_campo(row.get('COD IMS'))
+
+            if not candidatos:
+                candidatos = _normalizar_codigos_campo(row.get('COD FORNECEDOR'))
+
+            for codigo in candidatos:
+                codigo_chave = _codigo_principal(codigo)
+                if codigo_chave:
+                    chave_completa = f"{codigo_chave}|{key}"
+                    peso = mapa_peso_pn.get(chave_completa, np.nan)
+                    if pd.notna(peso):
+                        return peso
+
+            peso_fallback = mapa_peso_pn_fallback.get(key, np.nan)
+            return peso_fallback
+
+        peso_material_unitario = template.apply(resolver_peso_material, axis=1)
+        template['PESO MAT'] = round(template['QTDE'] * peso_material_unitario, 1)
+        
+        # Use COD IMS + MDR as the primary peso key, trying every IMS code before
+        # falling back to COD FORNECEDOR and, if needed, MDR-only.
+        def resolver_peso_mdr(row):
+            mdr_chave = _mdr_chave(row.get('MDR'))
+            candidatos = _normalizar_codigos_campo(row.get('COD IMS'))
+
+            if not candidatos:
+                candidatos = _normalizar_codigos_campo(row.get('COD FORNECEDOR'))
+
+            for codigo in candidatos:
+                chave = _chave_fornecedor_mdr(codigo, mdr_chave)
+                if chave:
+                    peso = mapa_peso_mdr.get(chave, np.nan)
+                    if pd.notna(peso):
+                        return peso
+
+            peso_fallback = mapa_peso_mdr_fallback.get(mdr_chave, np.nan)
+            return peso_fallback
+
+        peso_mdr_por_embalagem = template.apply(resolver_peso_mdr, axis=1)
+        template['PESO MDR'] = round(template['QTD EMBALAGENS'] * peso_mdr_por_embalagem, 1)
         
         # Garante que NaN e infinitos sejam tratados como 0 antes de somar
         template['M³'] = template['M³'].replace([np.inf, -np.inf], np.nan).fillna(0)
         template['PESO MAT'] = template['PESO MAT'].replace([np.inf, -np.inf], np.nan).fillna(0)
         template['PESO MDR'] = template['PESO MDR'].replace([np.inf, -np.inf], np.nan).fillna(0)
         template['PESO TOTAL'] = round(template['PESO MAT'] + template['PESO MDR'], 1)
+
+        debug_fornecedor = ''
+        if 'COD FORNECEDOR' in template.columns:
+            debug_mask = template['COD FORNECEDOR'].apply(lambda valor: _campo_tem_codigo(valor, debug_fornecedor))
+            if 'COD IMS' in template.columns:
+                debug_mask = debug_mask | template['COD IMS'].apply(lambda valor: _campo_tem_codigo(valor, debug_fornecedor))
+            if debug_mask.any():
+                print(f"\n[DEBUG] Fornecedor {debug_fornecedor} - Template.xlsx")
+                for idx, dbg_row in template.loc[debug_mask].iterrows():
+                    # Volume info
+                    volume_mdr = volume_por_mdr.loc[idx]
+                    chave_volume = volume_lookup_chave.loc[idx]
+                    volume_txt = f"{float(volume_mdr):.3f}" if pd.notna(volume_mdr) else "N/A"
+                    qtd_emb = dbg_row['QTD EMBALAGENS']
+                    m3_txt = f"{float(dbg_row['M³']):.3f}" if pd.notna(dbg_row['M³']) else "N/A"
+                    
+                    # Build keys for display
+                    cod_ims = dbg_row.get('COD IMS')
+                    cod_forn = dbg_row.get('COD FORNECEDOR')
+                    key = dbg_row.get('KEY')
+                    candidatos = _normalizar_codigos_campo(cod_ims)
+                    if not candidatos:
+                        candidatos = _normalizar_codigos_campo(cod_forn)
+                    
+                    # QME key
+                    qme_key_used = f"{_codigo_principal(candidatos[0]) if candidatos else ''}|{key}" if key else "N/A"
+                    
+                    # PESO MATERIAL key (COD FORNECEDOR + KEY)
+                    peso_mat_key_used = f"{_codigo_principal(candidatos[0]) if candidatos else ''}|{key}" if key else "N/A"
+                    
+                    # Get PESO MATERIAL unit from PN file (using composite key)
+                    peso_mat_unit_pn = peso_material_unitario.loc[idx]
+                    peso_mat_unit_txt = f"{float(peso_mat_unit_pn):.4f}" if pd.notna(peso_mat_unit_pn) else "N/A"
+                    qtde = dbg_row['QTDE']
+                    peso_mat_calc = f"{qtde} x {peso_mat_unit_txt}" if pd.notna(peso_mat_unit_pn) else "N/A"
+                    peso_mat_result = f"{float(dbg_row['PESO MAT']):.1f}" if pd.notna(dbg_row['PESO MAT']) else "N/A"
+                    
+                    # Build PESO MDR key for display (COD FORNECEDOR + MDR)
+                    mdr = dbg_row.get('MDR')
+                    peso_mdr_key_used = _chave_fornecedor_mdr(candidatos[0] if candidatos else '', mdr)
+                    peso_mdr_unit = peso_mdr_por_embalagem.loc[idx]
+                    peso_mdr_unit_txt = f"{float(peso_mdr_unit):.2f}" if pd.notna(peso_mdr_unit) else "N/A"
+                    peso_mdr_calc = f"{qtd_emb} x {peso_mdr_unit_txt}" if pd.notna(peso_mdr_unit) else "N/A"
+                    peso_mdr_result = f"{float(dbg_row['PESO MDR']):.1f}" if pd.notna(dbg_row['PESO MDR']) else "N/A"
+                    
+                    # PESO TOTAL calculation
+                    peso_total_calc = f"{peso_mat_result} + {peso_mdr_result}"
+                    peso_total_result = f"{float(dbg_row['PESO TOTAL']):.1f}" if pd.notna(dbg_row['PESO TOTAL']) else "N/A"
+                    
+                    print(
+                        f"  VOLUME_KEY={chave_volume or _chave_fornecedor_mdr(dbg_row.get('COD IMS'), dbg_row.get('MDR'))} | "
+                        f"QME_KEY={qme_key_used} | PESO_MAT_KEY={peso_mat_key_used} | PESO_MDR_KEY={peso_mdr_key_used or 'N/A'}"
+                    )
+                    print(
+                        f"  DESENHO={dbg_row['DESENHO']} | MDR={dbg_row['MDR']} | QME={dbg_row['QME']} | QTDE={qtde}"
+                    )
+                    print(
+                        f"  VOLUME={volume_txt} | QTD_EMB={qtd_emb} | M³ = {qtd_emb} x {volume_txt} = {m3_txt}"
+                    )
+                    print(
+                        f"  PESO_MAT_UNIT_PN={peso_mat_unit_txt} kg | PESO_MAT = {peso_mat_calc} = {peso_mat_result} kg"
+                    )
+                    print(
+                        f"  PESO_MDR_UNIT={peso_mdr_unit_txt} kg | PESO_MDR = {peso_mdr_calc} = {peso_mdr_result} kg"
+                    )
+                    print(
+                        f"  PESO_TOTAL = {peso_total_calc} = {peso_total_result} kg"
+                    )
+                    print()
 
         # Final cleanup: re-apply string normalisation in case any operation reintroduced floats
         if 'COD FORNECEDOR' in template.columns:
@@ -1417,13 +1805,7 @@ def consolidar_dados(use_manual=False, manual_veiculo=None):
     
     # Static adjustment values per supplier (applied after normal cargas calculation)
     static_adjustments = {
-        '800002365': +1,
-        '800030834': -1,
-        # '800048577': -1,
-        # '800006356': +1,
-        '800046699': -1,
-        '800014209': -1,
-        '800045273': -1,
+        '800002365': +0,
     }
     # ================================================
     
@@ -1655,6 +2037,26 @@ def consolidar_dados(use_manual=False, manual_veiculo=None):
                 volume_total = linhas_rota['M³'].sum()
                 peso_total = linhas_rota['PESO TOTAL'].sum()
                 embalagens_total = linhas_rota['QTD EMBALAGENS'].sum()
+
+                debug_fornecedor = ''
+                
+                # 800032490
+                debug_rows = linhas_rota[linhas_rota['COD FORNECEDOR'].apply(lambda valor: _campo_tem_codigo(valor, debug_fornecedor))]
+                if not debug_rows.empty:
+                    print(
+                        f"\n[DEBUG] Fornecedor {debug_fornecedor} - VIAJANTE.xlsx | "
+                        f"COD FLUXO={cod_fluxo} | COD DESTINO={cod_dest}"
+                    )
+                    for _, dbg_row in debug_rows.iterrows():
+                        qtd_embalagens = dbg_row['QTD EMBALAGENS']
+                        m3 = dbg_row['M³']
+                        volume_unitario = (m3 / qtd_embalagens) if pd.notna(qtd_embalagens) and qtd_embalagens not in [0, 0.0] else np.nan
+                        volume_txt = f"{float(volume_unitario):.3f}" if pd.notna(volume_unitario) else "N/A"
+                        m3_txt = f"{float(m3):.3f}" if pd.notna(m3) else "N/A"
+                        print(
+                            f"  DESENHO={dbg_row['DESENHO']} | MDR={dbg_row['MDR']} | VOLUME={volume_txt} | "
+                            f"QTD EMBALAGENS={qtd_embalagens} | M³={qtd_embalagens} x {volume_txt} = {m3_txt}"
+                        )
 
                 if tipo_saturacao.upper() == 'VOLUME':
                     saturacao_total = linhas_rota['SAT VOLUME (%)'].sum()

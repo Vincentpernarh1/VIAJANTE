@@ -43,7 +43,11 @@ warnings.filterwarnings(
     message="^WARNING .*" # Hides the file size warnings which don't have a category
 )
 
-caminho_base = os.getcwd()
+# Always resolve paths relative to the exe's location (or source root), never os.getcwd()
+if getattr(sys, 'frozen', False):
+    caminho_base = os.path.dirname(sys.executable)
+else:
+    caminho_base = os.path.dirname(os.path.abspath(__file__))
 # --- START: Global variables for filtering ---
 # Stores the complete, unfiltered data from the Treeview
 original_tree_data = []
@@ -202,7 +206,7 @@ def input_demanda(cod_destinos, use_all_codes=False, sheet_name=None, use_manual
     db_fluxos = pd.read_excel(fluxos, sheet_name='FLUXOS')
     
     # DEBUG: Track specific PN
-    DEBUG_PN = 520820720
+    DEBUG_PN = ''
     
     # Load PN_Conta_trabalho for CT filtering during template creation
     pn_ct_lookup = set()  # Will store (FORNECEDOR/COD_IMS, DESENHO) pairs
@@ -520,6 +524,14 @@ def input_demanda(cod_destinos, use_all_codes=False, sheet_name=None, use_manual
             df_final['VEICULO'] = int(manual_veiculo)
         except Exception:
             df_final['VEICULO'] = manual_veiculo
+
+    # Filter out rows where COD FLUXO is NaN and convert to int
+    if 'COD FLUXO' in df_final.columns:
+        # Keep only rows where COD FLUXO is not NaN
+        df_final = df_final[df_final['COD FLUXO'].notna()].copy()
+        # Convert COD FLUXO to int
+        if not df_final.empty:
+            df_final['COD FLUXO'] = df_final['COD FLUXO'].astype(int)
 
     df_final.to_excel("Template.xlsx", index=False)
     return df_final  # optionally return for further processing
