@@ -381,6 +381,10 @@ def Processar_Demandas(cod_destino, pasta_demandas="Demandas", sheet_name=None):
                 
                
                 df_temp = df_temp[df_temp['FDS'] == sheet_name]
+                df_temp = df_temp.groupby(['DESENHO', 'COD FORNECEDOR'], as_index=False).agg({
+                        'QTDE': 'sum',
+                        'FDS': 'first'  # Keep the first FDS value (should be same after filter)
+                    })
 
 
                 # 3. Filtra por COD DESTINO se fornecido
