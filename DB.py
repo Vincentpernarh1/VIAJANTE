@@ -1210,7 +1210,7 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
         if 'COD FLUXO' not in template.columns:
             template['COD FLUXO'] = None
         
-        template = template[['COD FLUXO', 'COD FORNECEDOR', 'FORNECEDOR', 'COD DESTINO', 'DESENHO', 'QTDE', 'DESCRIÇÃO MATERIAL',
+        template = template[['COD FLUXO', 'COD FORNECEDOR', 'FORNECEDOR', 'COD IMS', 'COD DESTINO', 'DESENHO', 'QTDE', 'DESCRIÇÃO MATERIAL',
                              'MDR', 'DESCRIÇÃO DA EMBALAGEM', 'QME', 'QTD EMBALAGENS', 'TIPO SATURACAO',
                              'VEICULO', 'MOT', 'FLECHINHA', 'M³', 'PESO MAT', 'PESO MDR', 'PESO TOTAL', 'PESO_MAXIMO']]
         
@@ -2067,18 +2067,9 @@ def consolidar_dados(use_manual=False, manual_veiculo=None):
                 else:
                     saturacao_total = linhas_rota['SAT PESO (%)'].sum()
 
-                nomes_fornecedores = linhas_rota[['COD FORNECEDOR', 'FORNECEDOR']].drop_duplicates()
-                nomes_fornecedores['COD FORNECEDOR'] = nomes_fornecedores['COD FORNECEDOR'].astype(str)
-                
-                
-                # Get supplier names in order
-                nomes_ordenados = []
-                for f in fornecedores_comuns:
-                    matching = nomes_fornecedores[nomes_fornecedores['COD FORNECEDOR'].apply(lambda x: f in normalizar_codigos(x))]
-                                            
-                    if not matching.empty:
-                        nomes_ordenados.append(matching.iloc[0]['FORNECEDOR'])
-                        
+                # Get supplier names directly from linhas_rota (already filtered to correct suppliers)
+                # No need to match codes - linhas_rota already contains only the relevant suppliers
+                nomes_ordenados = linhas_rota['FORNECEDOR'].drop_duplicates().tolist()
                         
                 cargas = math.ceil(saturacao_total / 100) if saturacao_total > 0 else 0
 
@@ -2128,35 +2119,104 @@ def consolidar_dados(use_manual=False, manual_veiculo=None):
                         
                         
                     dados_volume.append({
-                        'COD FLUXO': cod_fluxo,
-                        'COD DESTINO': cod_dest,
-                        'DESTINO': destino,
-                        'CÓDIGOS FORNECEDORES': '/'.join(fornecedores_comuns),
-                        'FORNECEDORES NA ROTA': ', '.join(nomes_ordenados),
-                        'VEÍCULO': veiculo_display,
-                        'TECNOLOGIA': rota['TECNOLOGIA'],
-                        'MOT': rota['MOT'],
-                        'TRANSPORTADORA': transportadora,
-                        'TIPO DE SATURAÇÃO': tipo_saturacao,
-                        'VOLUME TOTAL (m³)': round(volume_total, 3),
-                        'PESO TOTAL (kg)': round(peso_total, 1),
-                        'EMBALAGENS TOTAL': int(embalagens_total),
-                        'SATURAÇÃO TOTAL (%)': round(saturacao_total, 2),
-                        'CARGAS': cargas,
-                        'SUGESTÃO': sugestao,
-                        '% MDRs APURADOS': perc_mdr
+                        'Cód Fluxo': cod_fluxo,
+                        'Cód Destino': cod_dest,
+                        'Nome Destino': destino,
+                        'Cód Fornecedor': rota['COD IMS'] if pd.notna(rota['COD IMS']) else '',
+                        'IMS': '/'.join(fornecedores_comuns),
+                        'Fornecedores': ', '.join(nomes_ordenados),
+                        'Veículo Principal': veiculo_display,
+                        'Tecnol.': rota['TECNOLOGIA'],
+                        'Mot': rota['MOT'],
+                        'Transportadora': transportadora,
+                        'Tipo de Saturação': tipo_saturacao,
+                        'M³': round(volume_total, 3),
+                        'Peso Total (kg)': round(peso_total, 1),
+                        'Embalagens Total': int(embalagens_total),
+                        'Sat.': round(saturacao_total, 2),
+                        'Cargas': cargas,
+                        'Sugestão': sugestao,
+                        'Apuração_MDR': perc_mdr
                     })
      
     missing = all_template_suppliers - processed_suppliers
     # print(f"Suppliers in template but not processed: {missing}")
     
+    # --- Append missing fluxos (suppliers in FLUXO but with no PNs/demand) ---
+    # Track which Cód Fluxo values were processed
+    processed_fluxos = {row['Cód Fluxo'] for row in dados_volume}
+    all_fluxos = set(fluxos['COD FLUXO'].dropna().unique())
+    missing_fluxos = all_fluxos - processed_fluxos
+    
+    if missing_fluxos:
+        print(f"[INFO] Found {len(missing_fluxos)} fluxo(s) with no PNs/demand. Adding to Volume_por_rota with zeros.")
+        for cod_fluxo_missing in missing_fluxos:
+            # Get the fluxo row(s) for this Cód Fluxo
+            fluxo_rows = fluxos[fluxos['COD FLUXO'] == cod_fluxo_missing]
+            
+            for _, fluxo_row in fluxo_rows.iterrows():
+                # Map directly from FLUXO columns - no conversions
+                dados_volume.append({
+                    'Cód Fluxo': fluxo_row['COD FLUXO'],
+                    'Cód Destino': fluxo_row['COD DESTINO'],
+                    'Nome Destino': fluxo_row['NOME DESTINO'],
+                    'Cód Fornecedor': str(fluxo_row['COD FORNECEDOR']) if pd.notna(fluxo_row['COD FORNECEDOR']) else '',
+                    'IMS': str(fluxo_row['COD IMS']) if pd.notna(fluxo_row['COD IMS']) else '',
+                    'Fornecedores': str(fluxo_row['FORNECEDOR']) if pd.notna(fluxo_row['FORNECEDOR']) else '',
+                    'Veículo Principal': fluxo_row['VEICULO PRINCIPAL'],
+                    'Tecnol.': fluxo_row['TECNOLOGIA'],
+                    'Mot': fluxo_row['MOT'],
+                    'Transportadora': fluxo_row['TRANSPORTADORA'],
+                    'Tipo de Saturação': fluxo_row['TIPO SATURACAO'],
+                    'M³': 0.0,
+                    'Peso Total (kg)': 0.0,
+                    'Embalagens Total': 0,
+                    'Sat.': 0.0,
+                    'Cargas': 0,
+                    'Sugestão': 'Sem Demanda',
+                    'Apuração_MDR': 0.0
+                })
+    
     df_volume = pd.DataFrame(dados_volume)
     # Do NOT drop_duplicates - CT and FTL routes for same supplier are separate!
     
-   
-   
-    
-    df_volume.to_excel('Volume_por_rota.xlsx', index=False)
+    # --- Save with blue header formatting and auto-width columns ---
+    with pd.ExcelWriter('Volume_por_rota.xlsx', engine='openpyxl') as writer:
+        df_volume.to_excel(writer, sheet_name='Volume por Rota', index=False)
+        
+        # Apply formatting
+        ws = writer.sheets['Volume por Rota']
+        
+        # Blue header fill
+        header_fill = PatternFill(start_color='00246C', end_color='00246C', fill_type='solid')
+        header_font = Font(bold=True, color='FFFFFF')
+        header_align = Alignment(horizontal='center', vertical='center')
+        
+        # Auto-size columns and apply header formatting
+        for col_num, col in enumerate(ws.iter_cols(min_row=1, max_row=1), 1):
+            # Calculate width based on content
+            max_length = 0
+            column_letter = get_column_letter(col_num)
+            
+            # Check header length
+            header_cell = ws[f'{column_letter}1']
+            if header_cell.value:
+                max_length = len(str(header_cell.value))
+            
+            # Check data length (sample first 100 rows for performance)
+            for row_num in range(2, min(102, ws.max_row + 1)):
+                cell = ws[f'{column_letter}{row_num}']
+                if cell.value:
+                    max_length = max(max_length, len(str(cell.value)))
+            
+            # Set column width (add padding)
+            adjusted_width = min(max_length + 2, 50)  # Cap at 50 for very long content
+            ws.column_dimensions[column_letter].width = adjusted_width
+            
+            # Apply header formatting
+            header_cell.fill = header_fill
+            header_cell.font = header_font
+            header_cell.alignment = header_align
     
 #tree = ttk.Treeview()
 #tree_resumo = ttk.Treeview()
