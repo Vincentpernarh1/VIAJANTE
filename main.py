@@ -14,6 +14,8 @@ import threading
 #------------------------------- COMERNTS --------------------------------- \\
 
 # 800012939/20812 Edcha - Viajante novo calcula volume da funilaria. Exemplo, edscha do viajante novo saiu volume maior do que do acionamento antigo porque esse ultimo não calculava o volume da funilaria. 
+#522705650 Mareli (1097/1092) - Viajante novo calcula mas o antigo não calculava, por isso o volume do viajante novo saiu maior do que do antigo.
+
 
 
 def resource_path(relative_path):
@@ -702,7 +704,7 @@ style.map('Flechinha.TCombobox',
 
 flechinha_combo = ttk.Combobox(frame_cod_destino, textvariable=flechinha_var, width=12, state='readonly', 
                                 font=("Arial", 9), style='Flechinha.TCombobox')
-flechinha_combo['values'] = ['', 'Geral', 'Sábado', 'Domingo']
+flechinha_combo['values'] = ['', 'Geral', 'Sábado', 'Domingo', 'Feriado']
 flechinha_combo.pack(side=LEFT, padx=5)
 
 # Configure the dropdown list colors

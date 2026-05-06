@@ -6,6 +6,8 @@ import glob
 import re
 from datetime import datetime, timedelta
 import sys
+import argparse
+    
 
 # PyInstaller-compatible path resolution
 if getattr(sys, 'frozen', False):
@@ -173,7 +175,7 @@ def check_and_update_files(max_age_days=5, force_update=False, silent=False, pro
             # For now, always run with browser visible to avoid profile conflicts
             # TODO: Implement proper headless mode detection after profile initialization
             results = download_sharepoint_files(
-                headless=True,
+                headless=False,  # Force headless=False to avoid profile issues
                 silent=silent,
                 auto_close=True,  # Auto-close when called from application
                 progress_callback=progress_callback
@@ -219,8 +221,7 @@ def check_and_update_files(max_age_days=5, force_update=False, silent=False, pro
 
 if __name__ == "__main__":
     # When run directly, perform update check
-    import argparse
-    
+   
     parser = argparse.ArgumentParser(description="Check and update database files from SharePoint")
     parser.add_argument("--max-age", type=int, default=5, help="Maximum file age in days (default: 5)")
     parser.add_argument("--force", action="store_true", help="Force update regardless of file age")

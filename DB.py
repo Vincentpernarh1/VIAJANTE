@@ -1034,9 +1034,20 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
         template['QME'] = template.apply(resolver_qme, axis=1)
 
         # Ensure QME is valid (not zero, not NaN) before division
-        template['QME'] = template['QME'].fillna(1)  # Replace NaN with 1 to avoid division issues
-        template['QME'] = template['QME'].replace(0, 1)  # Replace 0 with 1 to avoid division by zero
-        template['QTD EMBALAGENS'] = np.ceil(template['QTDE'] / template['QME'])
+        # template['QME'] = template['QME'].fillna(1)  # Replace NaN with 1 to avoid division issues
+        # template['QME'] = template['QME'].replace(0, 1)  # Replace 0 with 1 to avoid division by zero
+        mask_invalid = (
+                template['QME'].isna() |
+                (template['QME'] == 0) |
+                (~np.isfinite(template['QME']))
+            )
+
+        template['QTD EMBALAGENS'] = np.where(
+                mask_invalid,
+                0,
+                np.ceil(template['QTDE'] / template['QME'])
+            )
+                    
         
         # Clean up any infinity values in QTD EMBALAGENS
         template['QTD EMBALAGENS'] = template['QTD EMBALAGENS'].replace([np.inf, -np.inf], np.nan).fillna(0)
@@ -1416,10 +1427,11 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
             # Try supplier-specific lookup first
             # Handle supplier code equivalence: 800006372 (SAP) = 21544 (IMS)
             supplier_codes = [fornecedor]
-            if fornecedor == 800006372:
-                supplier_codes.append(21544)
-            elif fornecedor == 21544:
-                supplier_codes.append(800006372)
+            # if fornecedor == 800006372:
+            #     supplier_codes.append(21544)
+            # elif fornecedor == 21544:
+            #     supplier_codes.append(800006372)
+
             
             # Use exact matching (faster than contains)
             filtro_fornecedor = (db_MDR['MDR'] == mdr) & (db_MDR['CÓD. FORNECEDOR'].isin(supplier_codes))
@@ -2095,7 +2107,8 @@ def consolidar_dados(use_manual=False, manual_veiculo=None):
                 
 
                 # Apuração de MDR
-                coluna_sat = 'SAT VOLUME (%)' if tipo_saturacao.upper() == 'VOLUME' else 'SAT PESO (%)'
+                
+                coluna_sat = 'SAT VOLUME (%)' if  'VOLUME' in tipo_saturacao.upper().strip()  else 'SAT PESO (%)'
                 
                 total_desenhos = linhas_rota['DESENHO'].nunique()
                 desenhos_apurados = linhas_rota[linhas_rota[coluna_sat].fillna(0) > 0]['DESENHO'].nunique()
@@ -2119,22 +2132,30 @@ def consolidar_dados(use_manual=False, manual_veiculo=None):
                         
                         
                     dados_volume.append({
-                        'Cód Fluxo': cod_fluxo,
+                        'IMS': '/'.join(fornecedores_comuns),
+                        'Cód Fornecedor': rota['COD IMS'] if pd.notna(rota['COD IMS']) else '',
+                        'Fornecedores': ', '.join(nomes_ordenados),
                         'Cód Destino': cod_dest,
                         'Nome Destino': destino,
-                        'Cód Fornecedor': rota['COD IMS'] if pd.notna(rota['COD IMS']) else '',
-                        'IMS': '/'.join(fornecedores_comuns),
-                        'Fornecedores': ', '.join(nomes_ordenados),
                         'Veículo Principal': veiculo_display,
-                        'Tecnol.': rota['TECNOLOGIA'],
                         'Mot': rota['MOT'],
-                        'Transportadora': transportadora,
+                        'Tecnol.': rota['TECNOLOGIA'],
                         'Tipo de Saturação': tipo_saturacao,
+                        'Pedido' : rota.get('PEDIDO', 'D'),
+                        'Cód Fluxo': cod_fluxo,
+                        'Transp.': transportadora,
+                        'Programadores': rota.get('PROGRAMADORES', ''),
+                        'DHL': rota.get('DHL', ''),
+                        'Jan.': rota.get('Jan', ''),
+                        'Obs Padrão': rota.get('OBS PADRÃO', ''),
+                        'Obs Variável': rota.get('OBS VARIAVEL', ''),
                         'M³': round(volume_total, 3),
-                        'Peso Total (kg)': round(peso_total, 1),
-                        'Embalagens Total': int(embalagens_total),
                         'Sat.': round(saturacao_total, 2),
                         'Cargas': cargas,
+                        'Hazmat': '',
+                        'À criar (0)': '',
+                        'Peso Total (kg)': round(peso_total, 1),
+                        'Embalagens Total': int(embalagens_total),
                         'Sugestão': sugestao,
                         'Apuração_MDR': perc_mdr
                     })
@@ -2157,22 +2178,30 @@ def consolidar_dados(use_manual=False, manual_veiculo=None):
             for _, fluxo_row in fluxo_rows.iterrows():
                 # Map directly from FLUXO columns - no conversions
                 dados_volume.append({
-                    'Cód Fluxo': fluxo_row['COD FLUXO'],
+                    'IMS': str(fluxo_row['COD IMS']) if pd.notna(fluxo_row['COD IMS']) else '',
+                    'Cód Fornecedor': str(fluxo_row['COD FORNECEDOR']) if pd.notna(fluxo_row['COD FORNECEDOR']) else '',
+                    'Fornecedores': str(fluxo_row['FORNECEDOR']) if pd.notna(fluxo_row['FORNECEDOR']) else '',
                     'Cód Destino': fluxo_row['COD DESTINO'],
                     'Nome Destino': fluxo_row['NOME DESTINO'],
-                    'Cód Fornecedor': str(fluxo_row['COD FORNECEDOR']) if pd.notna(fluxo_row['COD FORNECEDOR']) else '',
-                    'IMS': str(fluxo_row['COD IMS']) if pd.notna(fluxo_row['COD IMS']) else '',
-                    'Fornecedores': str(fluxo_row['FORNECEDOR']) if pd.notna(fluxo_row['FORNECEDOR']) else '',
                     'Veículo Principal': fluxo_row['VEICULO PRINCIPAL'],
-                    'Tecnol.': fluxo_row['TECNOLOGIA'],
                     'Mot': fluxo_row['MOT'],
-                    'Transportadora': fluxo_row['TRANSPORTADORA'],
+                    'Tecnol.': fluxo_row['TECNOLOGIA'],
                     'Tipo de Saturação': fluxo_row['TIPO SATURACAO'],
+                    'Pedido': fluxo_row.get('PEDIDO', 'D'),
+                    'Cód Fluxo': fluxo_row['COD FLUXO'],
+                    'Transp.': fluxo_row['TRANSPORTADORA'],
+                    'Programadores': fluxo_row.get('PROGRAMADORES', ''),
+                    'DHL': fluxo_row.get('DHL', ''),
+                    'Jan.': fluxo_row.get('Jan', ''),
+                    'Obs Padrão': fluxo_row.get('OBS PADRÃO', ''),
+                    'Obs Variável': fluxo_row.get('OBS VARIAVEL', ''),
                     'M³': 0.0,
-                    'Peso Total (kg)': 0.0,
-                    'Embalagens Total': 0,
                     'Sat.': 0.0,
                     'Cargas': 0,
+                    'Hazmat': '',
+                    'À criar (0)': '',
+                    'Peso Total (kg)': 0.0,
+                    'Embalagens Total': 0,
                     'Sugestão': 'Sem Demanda',
                     'Apuração_MDR': 0.0
                 })
