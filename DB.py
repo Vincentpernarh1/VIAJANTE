@@ -361,6 +361,8 @@ def Processar_Demandas(cod_destino, pasta_demandas="Demandas", sheet_name=None):
                 
                 # Lê o arquivo Excel
                 df_excel = pd.read_excel(caminho_completo_arquivo)
+                
+                
 
                 # Pega a lista de colunas que precisamos do arquivo original
                 colunas_originais_necessarias = list(colunas_mapeamento.keys())
@@ -385,7 +387,11 @@ def Processar_Demandas(cod_destino, pasta_demandas="Demandas", sheet_name=None):
                         'QTDE': 'sum',
                         'FDS': 'first'  # Keep the first FDS value (should be same after filter)
                     })
-
+                
+                # Validation: Check if any rows remain after filtering
+                if df_temp.empty:
+                    adicionar_erro(f"Arquivo '{nome_arquivo}': Nenhum dado encontrado para data '{sheet_name}'", "AVISO")
+                    continue
 
                 # 3. Filtra por COD DESTINO se fornecido
                 if cod_destino is not None:
@@ -468,6 +474,7 @@ def Processar_Demandas(cod_destino, pasta_demandas="Demandas", sheet_name=None):
     # Clean up COD IMS to remove .0 suffix if it exists  
     if 'COD IMS' in df_final.columns:
         df_final['COD IMS'] = df_final['COD IMS'].astype(str).str.replace(r'\.0$', '', regex=True)
+    
     
     return df_final
 
@@ -700,6 +707,11 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
             if not template.empty:
                 template['COD FLUXO'] = template['COD FLUXO'].astype(int)
         
+        # Early validation: check if template is empty after filtering
+        if template.empty:
+            adicionar_erro("Template está vazio após filtragem. Verifique se os arquivos de demanda possuem dados válidos com COD FLUXO e QTDE > 0.", "ERRO")
+            raise ValueError("Template vazio - nenhum dado válido para processar")
+        
         # Ensure COD IMS column exists (for backward compatibility with files that don't have it)
         if 'COD IMS' not in template.columns:
             template['COD IMS'] = ""
@@ -744,7 +756,8 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
         PN_CT_path = os.path.join(caminho_base,caminho_BD,"PN_Conta_trabalho.xlsx")
        
         # ------------------Working in the DB structrue------------------
-        db_PN = pd.read_excel(BD_PN, sheet_name='BD', dtype={'CÓD. FORNECEDOR': int, 'DESENHO': str})
+        # Use 'Int64' (nullable integer) instead of 'int' to handle NaN values in the Excel file
+        db_PN = pd.read_excel(BD_PN, sheet_name='BD', dtype={'DESENHO': str})
         db_PN = db_PN.rename(columns={'CÓD. FORNECEDOR': 'COD FORNECEDOR'})
         
         # Filter for EMPRESA = 1, 10.12 (not separate 10 and 12!)
@@ -939,6 +952,9 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
         template['MDR'] = template['DESENHO'].map(
             db_PN_valid_mdr.drop_duplicates('DESENHO', keep='first').set_index('DESENHO')['MDR']
         )
+        
+        # Track PNs not found in BD_CADASTRO_PN (no MDR means PN not registered)
+        template['PN_NOT_FOUND'] = template['MDR'].isna() | (template['MDR'].astype(str).str.strip() == '')
 
 
         # Passo 2: agora que já temos MDR no template, podemos montar a KEY
@@ -1072,10 +1088,20 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
             return pd.Series({'VOLUME_UNITARIO': volume_fallback, 'VOLUME_KEY': ''})
 
         volume_info = template.apply(resolver_volume, axis=1)
-        volume_por_mdr = volume_info['VOLUME_UNITARIO'].replace([np.inf, -np.inf], np.nan).fillna(0)
-        volume_lookup_chave = volume_info['VOLUME_KEY']
         
-        template['M³'] = round(template['QTD EMBALAGENS'] * volume_por_mdr, 3)
+        # Handle empty volume_info (when template is empty)
+        if volume_info.empty or 'VOLUME_UNITARIO' not in volume_info.columns:
+            adicionar_erro("Não foi possível calcular volume - dados insuficientes", "ERRO")
+            template['M³'] = 0
+            volume_por_mdr = pd.Series([0] * len(template), index=template.index)
+            volume_lookup_chave = pd.Series([''] * len(template), index=template.index)
+        else:
+            volume_por_mdr = volume_info['VOLUME_UNITARIO'].replace([np.inf, -np.inf], np.nan).fillna(0)
+            volume_lookup_chave = volume_info['VOLUME_KEY']
+        
+        # Only calculate M³ if volume_info was valid
+        if not volume_info.empty and 'VOLUME_UNITARIO' in volume_info.columns:
+            template['M³'] = round(template['QTD EMBALAGENS'] * volume_por_mdr, 3)
         
         
         # Use COD IMS + KEY as the primary peso material key, trying every IMS code before
@@ -1412,99 +1438,114 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
             return None
 
         def obter_capacidade_por_linha(row):
-            mdr = str(row['EMBALAGEM']).upper()  # Converte para string e caixa alta
-            cod_veic = row['VEICULO']
-            fornecedor = row['COD FORNECEDOR']
-            coluna = mapa_coluna_capacidade.get(cod_veic)
+            try:
+                mdr = str(row['EMBALAGEM']).upper()
+                cod_veic = row['VEICULO']
+                fornecedor = row['COD FORNECEDOR']
+                coluna = mapa_coluna_capacidade.get(cod_veic)
 
-            if not coluna:
-                # print(f"[ERRO] Código de veículo {cod_veic} não mapeado.")
-                return None
-            if coluna not in db_MDR.columns:
-                # print(f"[ERRO] Coluna '{coluna}' não encontrada no db_MDR para veículo {cod_veic}")
-                return None
+                if not coluna or not isinstance(coluna, str):
+                    return np.nan
+                if coluna not in db_MDR.columns:
+                    return np.nan
 
-            # Try supplier-specific lookup first
-            # Handle supplier code equivalence: 800006372 (SAP) = 21544 (IMS)
-            supplier_codes = [fornecedor]
-            # if fornecedor == 800006372:
-            #     supplier_codes.append(21544)
-            # elif fornecedor == 21544:
-            #     supplier_codes.append(800006372)
-
-            
-            # Use exact matching (faster than contains)
-            filtro_fornecedor = (db_MDR['MDR'] == mdr) & (db_MDR['CÓD. FORNECEDOR'].isin(supplier_codes))
-            capacidade_series_forn = db_MDR.loc[filtro_fornecedor, coluna].dropna()
-            
-            if not capacidade_series_forn.empty:
-                # Found supplier-specific capacity - use HYBRID approach
-                capacity_mean = capacidade_series_forn.mean()
-                capacity_min = capacidade_series_forn.min()
-                capacity_max = capacidade_series_forn.max()
-                capacity_mode = capacidade_series_forn.mode().values[0] if not capacidade_series_forn.mode().empty else capacity_mean
+                # Try supplier-specific lookup first
+                supplier_codes = [fornecedor]
                 
-                # Hybrid: Use MODE if high variance, otherwise MAX
-                variance = capacity_max - capacity_min
-                # If variance is more than 50% of MODE, use MODE (data likely has outliers)
-                if variance > capacity_mode * 0.5:
-                    capacity_selected = capacity_mode
-                    selection_method = 'MODE'
-                else:
-                    capacity_selected = capacity_max
-                    selection_method = 'MAX'
+                # Use exact matching
+                filtro_fornecedor = (db_MDR['MDR'] == mdr) & (db_MDR['CÓD. FORNECEDOR'].isin(supplier_codes))
+                capacidade_data_forn = db_MDR.loc[filtro_fornecedor, coluna]
                 
-                return capacity_selected
-            
-            # Fall back to all suppliers for this MDR, use MAX
-            filtro = db_MDR['MDR'] == mdr
-            capacidade_series = db_MDR.loc[filtro, coluna].dropna()
+                # Ensure we got a Series
+                if isinstance(capacidade_data_forn, pd.DataFrame):
+                    return np.nan
+                    
+                capacidade_series_forn = capacidade_data_forn.dropna()
+                
+                if not capacidade_series_forn.empty:
+                    # Found supplier-specific capacity - use HYBRID approach
+                    capacity_mean = float(capacidade_series_forn.mean())
+                    capacity_min = float(capacidade_series_forn.min())
+                    capacity_max = float(capacidade_series_forn.max())
+                    mode_result = capacidade_series_forn.mode()
+                    capacity_mode = float(mode_result.iloc[0]) if not mode_result.empty else capacity_mean
+                    
+                    # Hybrid: Use MODE if high variance, otherwise MAX
+                    variance = capacity_max - capacity_min
+                    if variance > capacity_mode * 0.5:
+                        return capacity_mode
+                    else:
+                        return capacity_max
+                
+                # Fall back to all suppliers for this MDR, use MAX
+                filtro = db_MDR['MDR'] == mdr
+                capacidade_data = db_MDR.loc[filtro, coluna]
+                
+                # Ensure we got a Series
+                if isinstance(capacidade_data, pd.DataFrame):
+                    return np.nan
+                    
+                capacidade_series = capacidade_data.dropna()
 
-            if capacidade_series.empty:
-                # print(f"[ERRO] Capacidade não encontrada para MDR {mdr} na coluna '{coluna}' (cod veic {cod_veic})")
-                return None
+                if capacidade_series.empty:
+                    return np.nan
 
-            # Use MAX approach to aggregate capacities
-            capacity_mean = capacidade_series.mean()
-            capacity_min = capacidade_series.min()
-            capacity_max = capacidade_series.max()
-            capacity_mode = capacidade_series.mode().values[0] if not capacidade_series.mode().empty else capacity_mean
-            
-            # Use MAX for calculations
-            capacity_selected = capacity_max
-            selection_method = 'MAX'
-            
-            return capacity_selected
+                # Use MAX approach
+                capacity_mean = float(capacidade_series.mean())
+                capacity_min = float(capacidade_series.min())
+                capacity_max = float(capacidade_series.max())
+                mode_result = capacidade_series.mode()
+                capacity_mode = float(mode_result.iloc[0]) if not mode_result.empty else capacity_mean
+                
+                return capacity_max
+                
+            except Exception as e:
+                print(f"[WARNING] Error in obter_capacidade_por_linha: {e}")
+                return np.nan
 
         def obter_capacidade_por_linha_veic_anterior(row):
+            try:
+                mdr = str(row['EMBALAGEM']).upper()
+                cod_veic = int(row['VEICULO'])
+                veic_anterior = obter_veiculo_anterior(cod_veic)
+               
+                if veic_anterior is None:
+                    return np.nan
 
-            mdr = str(row['EMBALAGEM']).upper()
-            cod_veic = int(row['VEICULO'])
-            veic_anterior = obter_veiculo_anterior(cod_veic)
-           
-            if veic_anterior is None :
-                # print(f"[INFO] Veículo anterior não definido para código {cod_veic}")
-                return None
+                coluna = mapa_coluna_capacidade.get(veic_anterior)
 
-            coluna = mapa_coluna_capacidade.get(veic_anterior)
+                if not coluna or not isinstance(coluna, str):
+                    return np.nan
+                
+                if coluna not in db_MDR.columns:
+                    return np.nan
 
-            if not coluna:
-                # print(f"[ERRO] Código de veículo anterior {veic_anterior} não mapeado.")
-                return None
-            
-            if coluna not in db_MDR.columns:
-                # print(f"[ERRO] Coluna '{coluna}' não encontrada no db_MDR para veículo anterior {veic_anterior}")
-                return None
+                # Use exact match to avoid str.contains issues
+                filtro = db_MDR['MDR'] == mdr
+                
+                # Ensure we're selecting a single column (string selector)
+                capacidade_data = db_MDR.loc[filtro, coluna]
+                
+                # If we got a DataFrame instead of Series, something is wrong
+                if isinstance(capacidade_data, pd.DataFrame):
+                    return np.nan
+                
+                # Now we have a Series, drop NaN values
+                capacidade_series = capacidade_data.dropna()
 
-            filtro = db_MDR['MDR'].str.contains(mdr)
-            capacidade_series = db_MDR.loc[filtro, coluna].dropna()
+                if capacidade_series.empty:
+                    return np.nan
 
-            if capacidade_series.empty:
-                # print(
-                #     f"[ERRO] Capacidade não encontrada para MDR {mdr} na coluna '{coluna}' (veic anterior {veic_anterior})")
-                return None
-
-            return capacidade_series.values[0]
+                # Get first value and ensure it's a scalar
+                valor = capacidade_series.iloc[0]
+                
+                # Convert to float, return NaN if fails
+                return float(valor) if pd.notna(valor) else np.nan
+                
+            except Exception as e:
+                # Log error but don't crash
+                print(f"[WARNING] Error in obter_capacidade_por_linha_veic_anterior: {e}")
+                return np.nan
 
         df_saturacao['CAPACIDADE'] = df_saturacao.apply(obter_capacidade_por_linha, axis=1)
         df_saturacao['VEICULO'] = df_saturacao['VEICULO'].fillna(0)
@@ -1792,22 +1833,70 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
                     cell.alignment = header_align
 
             if 'MDR' in template.columns:
-                pn_nao_cadastrados = template[
+                # Identify PNs with issues
+                pn_nao_cadastrados_list = []
+                
+                # 1. PNs not in BD_CADASTRO_PN (no MDR)
+                pn_sem_mdr = template[
                     template['MDR'].isna() | (template['MDR'].astype(str).str.strip() == '')
                 ].copy()
-
-                # select only the requested columns if they exist in the dataframe
-                cols_to_keep = ['COD FORNECEDOR', 'FORNECEDOR', 'COD DESTINO', 'DESENHO']
-                existing_cols = [c for c in cols_to_keep if c in pn_nao_cadastrados.columns]
-
-                if not pn_nao_cadastrados.empty and existing_cols:
-                    pn_nao_cadastrados = pn_nao_cadastrados[existing_cols]
-                    pn_nao_cadastrados.drop_duplicates(subset=["DESENHO"], inplace=True)
-                    pn_nao_cadastrados.to_excel(writer, sheet_name='PN Não Cadastrados', index=False)
+                if not pn_sem_mdr.empty:
+                    pn_sem_mdr['MOTIVO'] = 'PN não encontrado no BD_CADASTRO_PN (sem MDR)'
+                    pn_nao_cadastrados_list.append(pn_sem_mdr)
+                
+                # 2. PNs without QME (critical for calculations)
+                pn_sem_qme = template[
+                    template['MDR'].notna() & 
+                    (template['QME'].isna() | (template['QME'] == 0))
+                ].copy()
+                if not pn_sem_qme.empty:
+                    pn_sem_qme['MOTIVO'] = 'PN sem QME cadastrado'
+                    pn_nao_cadastrados_list.append(pn_sem_qme)
+                
+                # 3. PNs without DESCRIÇÃO MATERIAL
+                pn_sem_desc = template[
+                    template['MDR'].notna() & 
+                    (template['DESCRIÇÃO MATERIAL'].isna() | (template['DESCRIÇÃO MATERIAL'].astype(str).str.strip() == ''))
+                ].copy()
+                if not pn_sem_desc.empty:
+                    pn_sem_desc['MOTIVO'] = 'PN sem DESCRIÇÃO MATERIAL cadastrada'
+                    pn_nao_cadastrados_list.append(pn_sem_desc)
+                
+                # Combine all issues
+                if pn_nao_cadastrados_list:
+                    pn_nao_cadastrados = pd.concat(pn_nao_cadastrados_list, ignore_index=True)
                     
-                    # Log de PNs não cadastrados
-                    qtd_pn_faltando = len(pn_nao_cadastrados)
-                    adicionar_erro(f"{qtd_pn_faltando} desenho(s) sem MDR cadastrado. Verifique a aba 'PN Não Cadastrados'. do viajante", "AVISO")
+                    # Select columns to keep
+                    cols_to_keep = ['COD FORNECEDOR', 'FORNECEDOR', 'COD IMS', 'COD DESTINO', 'DESENHO', 'QTDE', 'MDR', 'QME', 'MOTIVO']
+                    existing_cols = [c for c in cols_to_keep if c in pn_nao_cadastrados.columns]
+                    
+                    if existing_cols:
+                        pn_nao_cadastrados = pn_nao_cadastrados[existing_cols]
+                        pn_nao_cadastrados.drop_duplicates(subset=["DESENHO", "MOTIVO"], inplace=True)
+                        pn_nao_cadastrados.to_excel(writer, sheet_name='PN Não Cadastrados', index=False)
+                        
+                        # Log de PNs não cadastrados
+                        qtd_pn_faltando = len(pn_nao_cadastrados)
+                        qtd_sem_mdr = len(pn_nao_cadastrados[pn_nao_cadastrados['MOTIVO'].str.contains('sem MDR', na=False)])
+                        adicionar_erro(f"{qtd_pn_faltando} PN(s) com problemas de cadastro ({qtd_sem_mdr} sem MDR). Verifique a aba 'PN Não Cadastrados' do viajante", "AVISO")
+                        
+                        # Append to tracking file
+                        tracking_file = os.path.join(caminho_base, caminho_BD, 'PNs_Nao_Cadastrados_Log.xlsx')
+                        try:
+                            if os.path.exists(tracking_file):
+                                existing_log = pd.read_excel(tracking_file)
+                                # Add timestamp if not present
+                                if 'DATA_SOLICITACAO' not in pn_nao_cadastrados.columns:
+                                    pn_nao_cadastrados['DATA_SOLICITACAO'] = pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')
+                                combined_log = pd.concat([existing_log, pn_nao_cadastrados], ignore_index=True)
+                                combined_log.drop_duplicates(subset=['DESENHO', 'COD FORNECEDOR'], keep='last', inplace=True)
+                                combined_log.to_excel(tracking_file, index=False)
+                            else:
+                                pn_nao_cadastrados['DATA_SOLICITACAO'] = pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')
+                                pn_nao_cadastrados.to_excel(tracking_file, index=False)
+                            print(f"[INFO] PNs não cadastrados salvos em: {tracking_file}")
+                        except Exception as e:
+                            adicionar_erro(f"Erro ao salvar log de PNs não cadastrados: {str(e)}", "AVISO")
 
     except Exception as e:
         adicionar_erro(f"Erro crítico ao processar informações: {str(e)}", "ERRO")
